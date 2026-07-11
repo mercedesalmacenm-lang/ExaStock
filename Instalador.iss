@@ -1,18 +1,18 @@
 ; Script modificado para cambiar el nombre del instalador, agregar un icono y un archivo de instrucciones.
 #define MyAppName "ExaStock"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.2"
 #define MyAppPublisher "AVQ"
 #define MyAppExeName "ExaStock.exe"
 #define MyAppAssocName MyAppName + " File"
 #define MyAppAssocExt ".myp"
 #define MyAppAssocKey StringChange(MyAppAssocName, " ", "") + MyAppAssocExt
-#define MyAppIcon "C:\Users\PROPIETARIO\Desktop\ConteoInventario\ExacStock.ico"
+#define MyAppIcon "C:\Users\PROPIETARIO\Desktop\ConteoInventario\ExaStock V1\ExacStock.ico"
 
 ; =========================================================================
 ; RUTA DE TU ARCHIVO DE INSTRUCCIONES
 ; =========================================================================
 ; Asegúrate de crear este archivo "instrucciones.txt" en esa misma carpeta.
-#define MyAppReadme "C:\Users\PROPIETARIO\Desktop\ConteoInventario\Instrucciones.txt"
+#define MyAppReadme "C:\Users\PROPIETARIO\Desktop\ConteoInventario\ExaStock V1\Instrucciones.txt"
 ; =========================================================================
 
 [Setup]
@@ -43,10 +43,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; Ejecutable principal de la aplicación
-Source: "C:\Users\PROPIETARIO\Desktop\ConteoInventario\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\PROPIETARIO\Desktop\ConteoInventario\ExaStock V1\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 ; COPIAR LA CARPETA STATIC (librerias JS para el escaner del celular):
-Source: "C:\Users\PROPIETARIO\Desktop\ConteoInventario\static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "C:\Users\PROPIETARIO\Desktop\ConteoInventario\ExaStock V1\static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; COPIAR EL ARCHIVO DE INSTRUCCIONES A LA CARPETA DE INSTALACIÓN:
 Source: "{#MyAppReadme}"; DestDir: "{app}"; Flags: ignoreversion isreadme
