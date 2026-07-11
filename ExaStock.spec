@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('ExacStock.ico', '.'), ('static', 'static')]
+binaries = []
+hiddenimports = ['flask', 'qrcode']
+tmp_ret = collect_all('customtkinter')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['ConteoInventarioV2.py'],
+    ['ExaStock.py'],
     pathex=[],
-    binaries=[],
-    datas=[('ExacStock.ico', '.'), ('static', 'static')],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
