@@ -217,8 +217,8 @@ def declave(k):
 class InventarioApp(ctk.CTk):
     """ExaStock – Conteo de inventario preciso y veloz."""
 
-    GITHUB_REPO = "AVQ94/ExaStock"
-    GITHUB_API = f"https://api.github.com/repos/AVQ94/ExaStock/releases/latest"
+    GITHUB_REPO = "mercedesalmacenm-lang/ExaStock"
+    GITHUB_API = f"https://api.github.com/repos/mercedesalmacenm-lang/ExaStock/releases/latest"
 
     @staticmethod
     def _comprobar_actualizacion():
