@@ -1,0 +1,87 @@
+CONFIGURACIÓN INICIAL
+=====================
+
+1. La app crea automáticamente la carpeta:
+   Documentos/ConteoInventario/
+
+2. Ahí se guardan:
+   - sesion_conteo.json   → autoguardado (se recupera al abrir la app)
+   - conteos_guardados/   → conteos que guardas con nombre
+   - logs/                → registro de actividad (útil para revisar qué se hizo)
+
+3. El archivo Excel debe tener estas columnas (el nombre puede variar,
+   la app las detecta automáticamente):
+   almacen, ubicacion, articulo, descripcion, existencia
+
+   Opcional: unidad (ej: "PZA", "KG", "LTS")
+
+   IMPORTANTE: elimina las filas de encabezado que BOSS genera al inicio;
+   la primera fila del Excel deben ser los nombres de las columnas.
+
+
+CÓMO USAR LA APP
+================
+
+1. Cargar Excel
+   - Botón "Cargar Excel" → selecciona el archivo .xlsx
+   - La app agrupa automáticamente por ubicación + artículo
+
+2. Escanear una ubicación
+   - Escanea el código de la ubicación (con o sin prefijo "UBI-")
+   - El banner se vuelve azul y muestra la ubicación activa
+   - Ejemplo: "UBI-A1-PASILLO-3  ·  5/12 artículos contados"
+
+3. Escanear artículos
+   - Apunta al código de barras del artículo
+   - La app detecta:
+     ✔ ARTÍCULO CORRECTO → suena tono OK, suma al conteo
+     ✘ MAL UBICADO      → suena alerta, lo marca porque el artículo no va en esa ubicación
+     ✘ NO ENCONTRADO    → suena error, el código no existe en el Excel
+   - Si hay mal ubicados o no encontrados, aparecen al final de la tabla
+
+4. Escanear con el celular (sin lector físico)
+   - Botón "📷 Escanear con celular"
+   - Se abre una ventana con un código QR
+   - Escanea el QR con la cámara de tu celular (abre el enlace en Chrome)
+   - Cuando no hay internet: el celular debe estar en el mismo WiFi que la PC
+   - Cuando no hay WiFi: el celular puede crear un punto de acceso (hotspot)
+     y la PC se conecta a la WiFi del celular
+   - El indicador 📱 Conectado / Desconectado en la barra muestra el estado
+   - Si la conexión se pierde, el celular se reconecta automáticamente
+
+5. Editar manualmente
+   - Doble clic en cualquier fila de la tabla para cambiar la cantidad contada
+   - También puedes editar el código, ubicación y descripción de los "No encontrados"
+
+6. Estadísticas
+   - La barra superior muestra: total registros, escaneados, coinciden,
+     con diferencia, pendientes, mal ubicados, no encontrados
+   - Haz clic en cualquier estadística para filtrar la tabla
+
+7. Guardar y continuar después
+   - "Guardar conteo" → guarda con un nombre (aparece en la lista)
+   - "Abrir guardado" → lista los conteos guardados, elige y continúa
+   - La app también guarda automáticamente el progreso al escanear;
+     si cierras sin querer, al abrir de nuevo preguntará si quieres continuar
+
+8. Exportar resultados
+   - Botón "Exportar resultados" → genera un Excel con todo:
+     filas del inventario, mal ubicados y no encontrados
+
+
+CONSEJOS
+========
+
+- Siempre escanea primero la ubicación
+- La cantidad por defecto es 1; cámbiala en el campo "Cant." antes de escanear
+- Puedes escribir directamente en el campo "Buscar / filtrar" para encontrar
+  artículos por código, descripción o ubicación
+- El botón "Solo ubicación activa" muestra únicamente los artículos de la
+  ubicación actual
+- Las ediciones manuales también se guardan automáticamente
+
+SOPORTE
+=======
+
+Para ayuda o reportar errores, escribe al correo que aparece en el botón
+"Ayuda" dentro de la aplicación, o consulta con el área de almacén.
