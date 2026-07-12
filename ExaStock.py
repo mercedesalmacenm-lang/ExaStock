@@ -267,6 +267,19 @@ class InventarioApp(ctk.CTk):
         except Exception:
             return False
 
+    @staticmethod
+    def _limpiar_instaladores_viejos():
+        import glob as _glob
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        exe_actual = os.path.abspath(sys.argv[0]) if getattr(sys, 'frozen', False) else None
+        for f in _glob.glob(os.path.join(desktop, "ExaStock_v*.exe")):
+            try:
+                if exe_actual and os.path.abspath(f) == exe_actual:
+                    continue
+                os.remove(f)
+            except Exception:
+                pass
+
     def _revisar_actualizacion(self):
         """Se ejecuta al inicio. Si hay actualización, lo muestra."""
         threading.Thread(target=self._revisar_actualizacion_hilo, daemon=True).start()
@@ -365,11 +378,17 @@ class InventarioApp(ctk.CTk):
             self._update_win.destroy()
         self.set_status("Listo")
         if getattr(self, "_descarga_ok", False):
-            messagebox.showinfo(
+            nuevo = os.path.join(os.path.expanduser("~"), "Desktop", f"ExaStock_v{self._ultima_version}.exe")
+            respuesta = messagebox.askyesno(
                 "Descarga completada",
-                "El instalador se ha descargado al escritorio.\n"
-                "Ciérralo antes de ejecutar el nuevo."
+                f"ExaStock v{self._ultima_version} se ha descargado.\n\n"
+                f"Se abrirá automáticamente.\n"
+                "¿Cerrar esta versión antigua ahora?"
             )
+            if os.path.exists(nuevo):
+                os.startfile(nuevo)
+            if respuesta:
+                self.after(500, self.destroy)
         else:
             messagebox.showerror(
                 "Error de descarga",
@@ -401,6 +420,7 @@ class InventarioApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
+        self._limpiar_instaladores_viejos()
 
         self.title(APP_TITLE)
         self.geometry("1200x700")
