@@ -10,7 +10,6 @@ import logging
 import logging.handlers
 import re
 import urllib.request
-import shutil
 import zipfile
 
 from mobile_scanner import iniciar_servidor, codigo_queue, conexion_queue, estado_queue, mostrar_ventana_qr
@@ -304,15 +303,66 @@ class InventarioApp(ctk.CTk):
             self.lbl_update_status.configure(text="")
 
     def _descargar_actualizacion(self):
+        import glob as _glob
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        for f in _glob.glob(os.path.join(desktop, "ExaStock_v*.exe")):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+
         self.set_status("Descargando actualización...")
         hilo = threading.Thread(target=self._descargar_hilo, daemon=True)
         hilo.start()
-        self.after(100, lambda: self._esperar_descarga(hilo))
+        self.after(100, lambda: self._mostrar_progreso_descarga(hilo))
 
-    def _esperar_descarga(self, hilo):
+    def _mostrar_progreso_descarga(self, hilo):
+        ANCHO, ALTO = 400, 150
+        win = ctk.CTkToplevel(self)
+        win.configure(fg_color=COLOR_BRAND_LIGHT)
+        win.title("Descargando actualización...")
+        win.resizable(False, False)
+        win.transient(self)
+        self._centrar_toplevel(win, ANCHO, ALTO)
+        win.minsize(ANCHO, ALTO)
+        win.maxsize(ANCHO, ALTO)
+        win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        self._update_win = win
+        self._update_lbl = ctk.CTkLabel(
+            win, text="Descargando ExaStock v" + self._ultima_version + "...",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        self._update_lbl.pack(pady=(25, 5))
+
+        self._update_pct = ctk.CTkLabel(
+            win, text="0%", font=ctk.CTkFont(size=12), text_color="#666666"
+        )
+        self._update_pct.pack(pady=(0, 5))
+
+        self._update_bar = ctk.CTkProgressBar(win, width=320)
+        self._update_bar.pack(pady=(0, 15))
+        self._update_bar.set(0)
+
+        win.grab_set()
+        self._pollar_descarga(hilo)
+
+    def _pollar_descarga(self, hilo):
         if hilo.is_alive():
-            self.after(200, lambda: self._esperar_descarga(hilo))
+            if hasattr(self, "_descarga_progreso"):
+                pct = self._descarga_progreso
+                self._update_bar.set(pct / 100)
+                self._update_pct.configure(text=f"{pct:.0f}%")
+            self.after(150, lambda: self._pollar_descarga(hilo))
             return
+        self._update_bar.set(1.0)
+        self._update_pct.configure(text="100%")
+        self.after(300, lambda: self._cerrar_progreso_descarga())
+
+    def _cerrar_progreso_descarga(self):
+        if hasattr(self, "_update_win") and self._update_win.winfo_exists():
+            self._update_win.grab_release()
+            self._update_win.destroy()
         self.set_status("Listo")
         if getattr(self, "_descarga_ok", False):
             messagebox.showinfo(
@@ -320,13 +370,31 @@ class InventarioApp(ctk.CTk):
                 "El instalador se ha descargado al escritorio.\n"
                 "Ciérralo antes de ejecutar el nuevo."
             )
+        else:
+            messagebox.showerror(
+                "Error de descarga",
+                "No se pudo descargar la actualización.\n"
+                "Verifica tu conexión a internet."
+            )
 
     def _descargar_hilo(self):
         try:
+            self._descarga_progreso = 0
             destino = os.path.join(os.path.expanduser("~"), "Desktop", f"ExaStock_v{self._ultima_version}.exe")
-            with urllib.request.urlopen(self._url_descarga, timeout=60) as r:
+            req = urllib.request.Request(self._url_descarga, headers={"User-Agent": "ExaStock/1.0"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                total = int(r.headers.get("Content-Length", 0))
+                descargado = 0
                 with open(destino, "wb") as f:
-                    shutil.copyfileobj(r, f)
+                    while True:
+                        chunk = r.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        descargado += len(chunk)
+                        if total > 0:
+                            self._descarga_progreso = min(99, (descargado * 100) // total)
+            self._descarga_progreso = 100
             self._descarga_ok = True
         except Exception:
             self._descarga_ok = False
