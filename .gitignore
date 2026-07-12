@@ -1,0 +1,8 @@
+build/
+dist/
+__pycache__/
+*.spec
+*.pyc
+conteos_guardados/
+conteo_*.log
+sesion_conteo.json

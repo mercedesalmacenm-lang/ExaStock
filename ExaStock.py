@@ -513,6 +513,7 @@ class InventarioApp(ctk.CTk):
         self._filas_por_pagina = 500
         self._total_filas_filtradas = 0
         self.stat_boxes = {}
+        self._historial_escaneos = []
         self._categoria_por_stat = {
             "total": "Todos",
             "escaneados": "Escaneados",
@@ -600,6 +601,16 @@ class InventarioApp(ctk.CTk):
                     "Usa \"Exportar resultados\" para generar\n"
                     "un Excel con el resumen del conteo.\n\n"
                     "El progreso se guarda automáticamente."
+                ),
+            },
+            {
+                "titulo": "6. Deshacer (Ctrl+Z)",
+                "descripcion": (
+                    "Si te equivocas en el último escaneo,\n"
+                    "presiona Ctrl+Z para deshacerlo.\n\n"
+                    "Se descontará automáticamente la cantidad\n"
+                    "y se actualizarán las estadísticas.\n\n"
+                    "Puedes deshacer varios escaneos seguidos."
                 ),
             },
             {
@@ -1043,7 +1054,7 @@ class InventarioApp(ctk.CTk):
         )
         self.entry_cantidad.insert(0, "1")
         self.entry_cantidad.pack(side="left")
-        self.entry_cantidad.bind("<Return>", lambda e: self.entry_scan.focus_set())
+        self.entry_cantidad.bind("<Return>", lambda e: self.on_scan())
         self.entry_cantidad.bind("<FocusIn>", lambda e: self.entry_cantidad.select_range(0, "end"))
         crear_tooltip(self.entry_cantidad, "Cantidad de unidades a registrar")
 
@@ -1051,6 +1062,12 @@ class InventarioApp(ctk.CTk):
         self.lbl_ultimo.pack(side="left", padx=15)
 
         self.bind_all("<Button-1>", self._reenfocar_scan, add="+")
+        def _ctrl_z_entry(e):
+            self.deshacer_escaneo()
+            return "break"
+        self.entry_scan.bind("<Control-z>", _ctrl_z_entry)
+        self.entry_cantidad.bind("<Control-z>", _ctrl_z_entry)
+        self.bind_all("<Control-z>", self.deshacer_escaneo)
 
         filtro_frame = ctk.CTkFrame(self, fg_color="transparent")
         filtro_frame.pack(side="top", fill="x", padx=20, pady=(0, 5))
@@ -1351,6 +1368,7 @@ class InventarioApp(ctk.CTk):
             self.counts = {}
             self.mismatches = {}
             self.no_encontrados = {}
+            self._historial_escaneos = []
             self.entry_filtro.delete(0, "end")
             self.solo_ubicacion_activa = False
             self.btn_solo_ubicacion_activa.configure(fg_color="transparent", border_color="#999999")
@@ -1465,6 +1483,7 @@ class InventarioApp(ctk.CTk):
             if target is None:
                 sonido_error()
                 self.lbl_ultimo.configure(text=f"⚠ '{codigo_raw}' no está en el reporte", text_color="#C0392B")
+                self.entry_scan.focus_set()
                 return
 
             self.ubicacion_activa = self.ubicaciones_norm_map[target]
@@ -1476,6 +1495,7 @@ class InventarioApp(ctk.CTk):
             _log.info("UBICACION | %s", self.ubicacion_activa)
             self._pagina_actual = 0
             self.refrescar_tabla()
+            self.entry_scan.focus_set()
             return
 
         if codigo_norm in self.ubicaciones_set:
@@ -1488,11 +1508,13 @@ class InventarioApp(ctk.CTk):
             _log.info("UBICACION | %s", self.ubicacion_activa)
             self._pagina_actual = 0
             self.refrescar_tabla()
+            self.entry_scan.focus_set()
             return
 
         if self.ubicacion_activa is None:
             sonido_error()
             self.lbl_ultimo.configure(text="⚠ Escanea primero una ubicación válida", text_color="#C0392B")
+            self.entry_scan.focus_set()
             return
 
         articulos_aqui = self.articulos_por_ubicacion.get(self.ubicacion_activa, set())
@@ -1500,6 +1522,7 @@ class InventarioApp(ctk.CTk):
             articulo_original = self._buscar_articulo_original(self.ubicacion_activa, codigo_norm)
             k = clave(self.ubicacion_activa, articulo_original)
             self.counts[k] = self.counts.get(k, 0) + cantidad
+            self._historial_escaneos.append({"tipo": "count", "key": k, "cantidad": cantidad})
             desc = self.df.loc[(self.df["Ubicacion"] == self.ubicacion_activa) & (self.df["Articulo"] == articulo_original), "Descripcion"].iloc[0]
             sonido_ok()
             _log.info("SCAN OK | %s | %s x%s | total=%s", self.ubicacion_activa, articulo_original, fmt_num(cantidad), fmt_num(self.counts[k]))
@@ -1510,6 +1533,7 @@ class InventarioApp(ctk.CTk):
             articulo_original = self._buscar_articulo_original_global(codigo_norm)
             k = clave(self.ubicacion_activa, articulo_original)
             self.mismatches[k] = self.mismatches.get(k, 0) + cantidad
+            self._historial_escaneos.append({"tipo": "mismatch", "key": k, "cantidad": cantidad})
             ubic_correctas = self.df.loc[self.df["Articulo"] == articulo_original, "Ubicacion"].unique()
             sonido_alerta()
             _log.info("MAL UBICADO | %s en %s (deberia ir en %s)", articulo_original, self.ubicacion_activa, ", ".join(ubic_correctas))
@@ -1523,9 +1547,52 @@ class InventarioApp(ctk.CTk):
                 self.no_encontrados[codigo_norm]["veces"] += cantidad
             else:
                 self.no_encontrados[codigo_norm] = {"veces": cantidad, "texto": codigo_raw}
+            self._historial_escaneos.append({"tipo": "noencontrado", "codigo_norm": codigo_norm, "cantidad": cantidad})
             sonido_error()
             _log.info("NO ENCONTRADO | %s en %s", codigo_raw, self.ubicacion_activa)
             self.lbl_ultimo.configure(text=f"✘ {codigo_raw} no está en el reporte", text_color="#C0392B")
+
+        self._reset_cantidad()
+        self._programar_autoguardado()
+        self._actualizar_banner()
+        self._actualizar_stats_escalera()
+        self.entry_scan.focus_set()
+
+    def deshacer_escaneo(self, event=None):
+        if not self._historial_escaneos:
+            self.lbl_ultimo.configure(text="No hay escaneos para deshacer", text_color="#C0392B")
+            return
+        ultimo = self._historial_escaneos.pop()
+        tipo = ultimo["tipo"]
+        cantidad = ultimo["cantidad"]
+
+        if tipo == "count":
+            k = ultimo["key"]
+            self.counts[k] = self.counts.get(k, 0) - cantidad
+            if self.counts[k] <= 0:
+                self.counts.pop(k, None)
+            articulo_original = declave(k)[1]
+            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} de {articulo_original}", text_color="#E67E22")
+            if self.ubicacion_activa:
+                desc = self._descripcion_articulo(articulo_original)
+                self._actualizar_fila_escaneada(k, articulo_original, desc)
+        elif tipo == "mismatch":
+            k = ultimo["key"]
+            self.mismatches[k] = self.mismatches.get(k, 0) - cantidad
+            if self.mismatches[k] <= 0:
+                self.mismatches.pop(k, None)
+            articulo_original = declave(k)[1]
+            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} mal ubicado de {articulo_original}", text_color="#E67E22")
+            if self.ubicacion_activa:
+                desc = self._descripcion_articulo(articulo_original)
+                self._actualizar_fila_escaneada(k, articulo_original, desc)
+        elif tipo == "noencontrado":
+            cn = ultimo["codigo_norm"]
+            if cn in self.no_encontrados:
+                self.no_encontrados[cn]["veces"] -= cantidad
+                if self.no_encontrados[cn]["veces"] <= 0:
+                    del self.no_encontrados[cn]
+            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} no encontrado", text_color="#E67E22")
 
         self._reset_cantidad()
         self._programar_autoguardado()
@@ -1957,6 +2024,7 @@ class InventarioApp(ctk.CTk):
             self.counts = data.get("counts", {})
             self.mismatches = data.get("mismatches", {})
             self.no_encontrados = self._migrar_no_encontrados(data.get("no_encontrados", {}))
+            self._historial_escaneos = []
             self._actualizar_banner()
             self.guardar_sesion()
             self.refrescar_tabla()
@@ -2163,6 +2231,7 @@ class InventarioApp(ctk.CTk):
         self.counts = {}
         self.mismatches = {}
         self.no_encontrados = {}
+        self._historial_escaneos = []
         self._actualizar_banner()
         self._programar_autoguardado()
         _log.info("NUEVO CONTEO | progreso anterior borrado")
