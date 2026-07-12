@@ -63,6 +63,9 @@ try:
 except ImportError:
     _QR_DISPONIBLE = False
 
+import logging
+_log_scanner = logging.getLogger("conteo_inventario.scanner")
+
 codigo_queue = queue.Queue()
 conexion_queue = queue.Queue()
 estado_queue = queue.Queue()
@@ -168,7 +171,17 @@ HTML_PAGE = """<!doctype html>
     background: #1B3A57; color: #fff; border: none; border-radius: 10px;
     font-size: 1.1em; cursor: pointer;
   }
-  #pairing-error { color: #C0392B; margin-top: 10px; display: none; font-size: 0.9em; }
+  #pairing-error {
+    color: #fff; margin-top: 15px; display: none; font-size: 1em; font-weight: bold;
+    background: #C0392B; padding: 12px 20px; border-radius: 10px;
+    max-width: 280px; margin-left: auto; margin-right: auto;
+  }
+  #pairing-input.error { border-color: #C0392B; animation: shake 0.4s; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-8px); }
+    75% { transform: translateX(8px); }
+  }
 </style>
 </head>
 <body>
@@ -185,7 +198,7 @@ HTML_PAGE = """<!doctype html>
     <h1>Escanner ExacStock</h1>
     <div id="reader-wrap">
       <div id="reader"></div>
-      <button id="btnFlash" onclick="toggleFlash()">Flash</button>
+      <button id="btnFlash" style="display:none">Flash</button>
     </div>
     <div id="estado-conexion" class="conectado">Conectado a la PC</div>
     <div id="resultado">Apunta la camara al codigo de barras...</div>
@@ -201,12 +214,26 @@ HTML_PAGE = """<!doctype html>
     let ultimoTiempo = 0;
     let pingInterval = null;
     let pairingToken = "";
+    let scannerActivo = null;
+
+    function mostrarErrorCodigo(msg) {
+      const inp = document.getElementById('pairing-input');
+      const err = document.getElementById('pairing-error');
+      inp.classList.remove('error');
+      void inp.offsetWidth;
+      inp.classList.add('error');
+      err.innerText = msg;
+      err.style.display = 'block';
+      inp.value = '';
+      inp.focus();
+    }
 
     function verificarCodigo() {
       const code = document.getElementById('pairing-input').value.trim().toUpperCase();
       if (code.length !== 6) return;
+      document.getElementById('pairing-btn').disabled = true;
       fetch('/verify?token=' + encodeURIComponent(code))
-        .then(r => { if (!r.ok) throw new Error('denied'); return r.json(); })
+        .then(r => r.json())
         .then(data => {
           if (data.ok) {
             pairingToken = code;
@@ -214,11 +241,13 @@ HTML_PAGE = """<!doctype html>
             document.getElementById('scanner-screen').style.display = 'block';
             iniciarScanner();
           } else {
-            document.getElementById('pairing-error').style.display = 'block';
+            mostrarErrorCodigo('Codigo incorrecto. Intenta de nuevo.');
           }
+          document.getElementById('pairing-btn').disabled = false;
         })
         .catch(() => {
-          document.getElementById('pairing-error').style.display = 'block';
+          mostrarErrorCodigo('Error de conexion. Verifica que estes en la misma red.');
+          document.getElementById('pairing-btn').disabled = false;
         });
     }
 
@@ -227,99 +256,158 @@ HTML_PAGE = """<!doctype html>
     });
 
     function iniciarScanner() {
+      if (scannerActivo) {
+        try { scannerActivo.stop(); } catch(e) {}
+        scannerActivo = null;
+      }
+      document.getElementById('reader').innerHTML = '';
+      if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+
+      const res = document.getElementById('resultado');
+      res.innerText = 'Iniciando camara...';
+
       function onScanSuccess(decodedText) {
         const ahora = Date.now();
         if (decodedText === ultimoCodigo && (ahora - ultimoTiempo) < 1500) return;
         ultimoCodigo = decodedText;
         ultimoTiempo = ahora;
 
-        fetch('/scan?token=' + encodeURIComponent(pairingToken), {
+        const token = pairingToken || '';
+        fetch('/scan?token=' + encodeURIComponent(token), {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({codigo: decodedText})
+        }).then(r => {
+          const cnt = document.getElementById('contador');
+          if (r.ok) {
+            cnt.style.color = '#1F8B4C';
+            cnt.innerText = 'Enviado a la PC';
+          } else {
+            cnt.style.color = '#C0392B';
+            cnt.innerText = 'Error ' + r.status + ' - Revisa el codigo';
+          }
+          setTimeout(() => {
+            cnt.style.color = '';
+            cnt.innerText = 'Escaneados: ' + total;
+          }, 1500);
+        }).catch(err => {
+          const cnt = document.getElementById('contador');
+          cnt.style.color = '#C0392B';
+          cnt.innerText = 'Sin conexion: ' + err;
+          setTimeout(() => {
+            cnt.style.color = '';
+            cnt.innerText = 'Escaneados: ' + total;
+          }, 2000);
         });
 
         total++;
-        document.getElementById('resultado').innerText = decodedText;
-        document.getElementById('resultado').style.fontSize = decodedText.length > 20 ? '1.2em' : '1.6em';
+        res.innerText = decodedText;
+        res.style.fontSize = decodedText.length > 20 ? '1.2em' : '1.6em';
         document.getElementById('contador').innerText = 'Escaneados: ' + total;
         if (navigator.vibrate) navigator.vibrate(80);
-      }
-
-      const formatosSoportados = [
-        Html5QrcodeSupportedFormats.QR_CODE,
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-        Html5QrcodeSupportedFormats.UPC_EAN_EXTENSION,
-        Html5QrcodeSupportedFormats.CODE_128,
-        Html5QrcodeSupportedFormats.CODE_39,
-        Html5QrcodeSupportedFormats.CODE_93,
-        Html5QrcodeSupportedFormats.CODABAR,
-        Html5QrcodeSupportedFormats.ITF,
-        Html5QrcodeSupportedFormats.DATA_MATRIX,
-      ];
-
-      const scanner = new Html5Qrcode("reader", {
-        formatsToSupport: formatosSoportados,
-        experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-        verbose: false,
-      });
-      let flashPrendido = false;
-
-      function toggleFlash() {
-        const capacidades = scanner.getRunningTrackCameraCapabilities();
-        const flash = capacidades.torchFeature();
-        flashPrendido = !flashPrendido;
-        flash.apply(flashPrendido);
-        document.getElementById('btnFlash').innerText = flashPrendido
-          ? 'Apagar flash' : 'Encender flash';
-      }
-
-      function iniciarPing() {
-        pingInterval = setInterval(() => {
-          fetch('/ping?token=' + encodeURIComponent(pairingToken), { method: 'GET' })
-            .then(r => {
-              if (!r.ok) throw new Error('no ok');
-              document.getElementById('estado-conexion').innerText = 'Conectado a la PC';
-              document.getElementById('estado-conexion').className = 'conectado';
-              document.getElementById('reconectar-msg').style.display = 'none';
-            })
-            .catch(() => {
-              document.getElementById('estado-conexion').innerText = 'Desconectado';
-              document.getElementById('estado-conexion').className = 'desconectado';
-              document.getElementById('reconectar-msg').style.display = 'block';
-              clearInterval(pingInterval);
-              setTimeout(() => location.reload(), 5000);
-            });
-        }, 3000);
-      }
-
-      scanner.start(
-        { facingMode: "environment" },
-        {
-          fps: 15,
-          qrbox: { width: 300, height: 170 },
-          videoConstraints: {
-            facingMode: "environment",
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            advanced: [{ focusMode: "continuous" }],
-          },
-        },
-        onScanSuccess
-      ).then(() => {
         try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = 1800;
+          osc.type = 'square';
+          gain.gain.value = 0.5;
+          osc.start();
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+          osc.stop(ctx.currentTime + 0.15);
+        } catch(e) {}
+      }
+
+      try {
+        const formatosSoportados = [
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.UPC_EAN_EXTENSION,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.CODE_93,
+          Html5QrcodeSupportedFormats.CODABAR,
+          Html5QrcodeSupportedFormats.ITF,
+          Html5QrcodeSupportedFormats.DATA_MATRIX,
+        ];
+
+        const scanner = new Html5Qrcode("reader", {
+          formatsToSupport: formatosSoportados,
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+          verbose: true,
+        });
+        scannerActivo = scanner;
+        let flashPrendido = false;
+
+        function toggleFlash() {
           const capacidades = scanner.getRunningTrackCameraCapabilities();
-          if (capacidades.torchFeature().isSupported()) {
-            document.getElementById('btnFlash').style.display = 'inline-block';
-          }
-        } catch (e) { }
-        iniciarPing();
-      }).catch(err => {
-        document.getElementById('resultado').innerText = 'Error de camara: ' + err;
-      });
+          const flash = capacidades.torchFeature();
+          flashPrendido = !flashPrendido;
+          flash.apply(flashPrendido);
+          document.getElementById('btnFlash').innerText = flashPrendido
+            ? 'Apagar flash' : 'Encender flash';
+        }
+
+        function iniciarPing() {
+          pingInterval = setInterval(() => {
+            fetch('/ping?token=' + encodeURIComponent(pairingToken), { method: 'GET' })
+              .then(r => {
+                if (!r.ok) throw new Error('no ok');
+                document.getElementById('estado-conexion').innerText = 'Conectado a la PC';
+                document.getElementById('estado-conexion').className = 'conectado';
+                document.getElementById('reconectar-msg').style.display = 'none';
+              })
+              .catch(() => {
+                document.getElementById('estado-conexion').innerText = 'Desconectado';
+                document.getElementById('estado-conexion').className = 'desconectado';
+                document.getElementById('reconectar-msg').style.display = 'block';
+                clearInterval(pingInterval);
+                setTimeout(() => location.reload(), 5000);
+              });
+          }, 3000);
+        }
+
+        scanner.start(
+          { facingMode: "environment" },
+          {
+            fps: 15,
+            qrbox: { width: 300, height: 170 },
+            aspectRatio: 1.0,
+            disableFlip: false,
+            videoConstraints: {
+              facingMode: "environment",
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              advanced: [{ focusMode: "continuous" }],
+            },
+          },
+          onScanSuccess
+        ).then(() => {
+          try {
+            const capacidades = scanner.getRunningTrackCameraCapabilities();
+            if (capacidades.torchFeature().isSupported()) {
+              const btnFlash = document.getElementById('btnFlash');
+              btnFlash.style.display = 'inline-block';
+              btnFlash.onclick = toggleFlash;
+            }
+          } catch (e) { }
+          res.innerText = 'Camara activa. Apunta al codigo de barras...';
+          iniciarPing();
+        }).catch(err => {
+          console.error('Error start:', err);
+          res.innerText = 'Error de camara: ' + err;
+          res.style.color = '#C0392B';
+        });
+      } catch(e) {
+        console.error('Error init:', e);
+        res.innerText = 'Error al iniciar: ' + e;
+        res.style.color = '#C0392B';
+      }
     }
   </script>
 </body>
@@ -352,8 +440,12 @@ def _scan():
     codigo = str(data.get("codigo", "")).strip()
     if len(codigo) > MAX_CODIGO_LENGTH:
         codigo = codigo[:MAX_CODIGO_LENGTH]
+    print(f"[SCANNER] raw={data.get('codigo')!r} stripped={codigo!r} printable={all(c.isprintable() for c in codigo) if codigo else False} qsize={codigo_queue.qsize()}", flush=True)
     if codigo and all(c.isprintable() for c in codigo):
         codigo_queue.put(codigo)
+        print(f"[SCANNER] PUT en cola OK, qsize={codigo_queue.qsize()}", flush=True)
+    else:
+        print(f"[SCANNER] RECHAZADO: codigo={codigo!r}", flush=True)
     return {"ok": True}
 
 

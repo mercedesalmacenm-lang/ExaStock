@@ -40,8 +40,14 @@ except ImportError:  # no estamos en Windows
 
 
 def sonido_ok():
-    """Escaneo correcto: artículo contado en la ubicación correcta, o ubicación activada."""
+    """Escaneo correcto: artículo contado en la ubicación correcta."""
     _beep(1500, 90)
+
+
+def sonido_ubicacion():
+    """Ubicación activada: doble beep para distinguirlo de un artículo."""
+    _beep(1200, 80)
+    _beep(1800, 80)
 
 
 def sonido_alerta():
@@ -140,8 +146,13 @@ def _es_primera_vez():
 def _marcar_tutorial_visto():
     """Marca el tutorial como visto para no volver a mostrarlo."""
     try:
+        cfg = {}
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        cfg["tutorial_visto"] = True
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"tutorial_visto": True}, f)
+            json.dump(cfg, f)
     except Exception:
         pass
 
@@ -530,6 +541,7 @@ class InventarioApp(ctk.CTk):
         self.counts = {}
         self.mismatches = {}
         self.no_encontrados = {}
+        self._counts_lock = threading.Lock()
 
         self.ubicaciones_set = set()
         self.ubicaciones_norm_map = {}
@@ -756,9 +768,16 @@ class InventarioApp(ctk.CTk):
         try:
             while True:
                 codigo = codigo_queue.get_nowait()
+                print(f"[DESKTOP] Cola recibio: {codigo!r}", flush=True)
+                _log.info("COLA CELULAR | codigo=%s", codigo)
                 self.procesar_codigo_escaneado(codigo)
         except queue.Empty:
             pass
+        except Exception as e:
+            import traceback
+            msg = f"[DESKTOP] Error procesando codigo del celular: {e}\n{traceback.format_exc()}"
+            print(msg, flush=True)
+            _log.exception("Error procesando codigo del celular")
         self.after(200, self.revisar_cola_escaner)
 
     def procesar_codigo_escaneado(self, codigo):
@@ -1501,7 +1520,6 @@ class InventarioApp(ctk.CTk):
 
     def on_scan(self, event=None):
         codigo_raw = self.entry_scan.get().strip()
-        self.entry_scan.delete(0, "end")
         if not codigo_raw:
             return
 
@@ -1509,6 +1527,7 @@ class InventarioApp(ctk.CTk):
             messagebox.showwarning("Sin reporte", "Primero carga el Excel del reporte.")
             return
 
+        self.entry_scan.delete(0, "end")
         cantidad = self._leer_cantidad()
         codigo_norm = normalizar(codigo_raw)
         prefijo_norm = normalizar(PREFIJO_UBICACION)
@@ -1526,7 +1545,7 @@ class InventarioApp(ctk.CTk):
             self.ubicacion_activa = self.ubicaciones_norm_map[target]
             self._actualizar_banner()
             self.lbl_ultimo.configure(text=f"📍 Ubicación activa: {self.ubicacion_activa}", text_color="#0B4C8C")
-            sonido_ok()
+            sonido_ubicacion()
             self._reset_cantidad()
             self._programar_autoguardado()
             _log.info("UBICACION | %s", self.ubicacion_activa)
@@ -1539,7 +1558,7 @@ class InventarioApp(ctk.CTk):
             self.ubicacion_activa = self.ubicaciones_norm_map[codigo_norm]
             self._actualizar_banner()
             self.lbl_ultimo.configure(text=f"📍 Ubicación activa: {self.ubicacion_activa}", text_color="#0B4C8C")
-            sonido_ok()
+            sonido_ubicacion()
             self._reset_cantidad()
             self._programar_autoguardado()
             _log.info("UBICACION | %s", self.ubicacion_activa)
@@ -1562,7 +1581,6 @@ class InventarioApp(ctk.CTk):
                 self.counts[k] = self.counts.get(k, 0) + cantidad
             self._historial_escaneos.append({"tipo": "count", "key": k, "cantidad": cantidad})
             desc = self.df.loc[(self.df["Ubicacion"] == self.ubicacion_activa) & (self.df["Articulo"] == articulo_original), "Descripcion"].iloc[0]
-            sonido_ok()
             _log.info("SCAN OK | %s | %s x%s | total=%s", self.ubicacion_activa, articulo_original, fmt_num(cantidad), fmt_num(self.counts[k]))
             self.lbl_ultimo.configure(text=f"✔ {articulo_original} (van {fmt_num(self.counts[k])})", text_color="#1F8B4C")
             self._actualizar_fila_escaneada(k, articulo_original, desc)
@@ -1574,6 +1592,8 @@ class InventarioApp(ctk.CTk):
                 self.mismatches[k] = self.mismatches.get(k, 0) + cantidad
             self._historial_escaneos.append({"tipo": "mismatch", "key": k, "cantidad": cantidad})
             ubic_correctas = self.df.loc[self.df["Articulo"] == articulo_original, "Ubicacion"].unique()
+            desc_row = self.df.loc[self.df["Articulo"] == articulo_original, "Descripcion"]
+            desc = desc_row.iloc[0] if not desc_row.empty else ""
             sonido_alerta()
             _log.info("MAL UBICADO | %s en %s (deberia ir en %s)", articulo_original, self.ubicacion_activa, ", ".join(ubic_correctas))
             self.lbl_ultimo.configure(
@@ -1606,6 +1626,7 @@ class InventarioApp(ctk.CTk):
         tipo = ultimo["tipo"]
         cantidad = ultimo["cantidad"]
 
+        articulo_original = ""
         with self._counts_lock:
             if tipo == "count":
                 k = ultimo["key"]
@@ -1613,27 +1634,31 @@ class InventarioApp(ctk.CTk):
                 if self.counts[k] <= 0:
                     self.counts.pop(k, None)
                 articulo_original = declave(k)[1]
-                self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} de {articulo_original}", text_color="#E67E22")
-                if self.ubicacion_activa:
-                    desc = self._descripcion_articulo(articulo_original)
-                    self._actualizar_fila_escaneada(k, articulo_original, desc)
             elif tipo == "mismatch":
                 k = ultimo["key"]
                 self.mismatches[k] = self.mismatches.get(k, 0) - cantidad
                 if self.mismatches[k] <= 0:
                     self.mismatches.pop(k, None)
                 articulo_original = declave(k)[1]
-                self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} mal ubicado de {articulo_original}", text_color="#E67E22")
-                if self.ubicacion_activa:
-                    desc = self._descripcion_articulo(articulo_original)
-                    self._actualizar_fila_escaneada(k, articulo_original, desc)
             elif tipo == "noencontrado":
                 cn = ultimo["codigo_norm"]
                 if cn in self.no_encontrados:
                     self.no_encontrados[cn]["veces"] -= cantidad
                     if self.no_encontrados[cn]["veces"] <= 0:
                         del self.no_encontrados[cn]
-                self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} no encontrado", text_color="#E67E22")
+
+        if tipo == "count":
+            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} de {articulo_original}", text_color="#E67E22")
+            if self.ubicacion_activa:
+                desc = self._descripcion_articulo(articulo_original)
+                self._actualizar_fila_escaneada(k, articulo_original, desc)
+        elif tipo == "mismatch":
+            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} mal ubicado de {articulo_original}", text_color="#E67E22")
+            if self.ubicacion_activa:
+                desc = self._descripcion_articulo(articulo_original)
+                self._actualizar_fila_escaneada(k, articulo_original, desc)
+        elif tipo == "noencontrado":
+            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} no encontrado", text_color="#E67E22")
 
         self._reset_cantidad()
         self._programar_autoguardado()
@@ -1686,7 +1711,8 @@ class InventarioApp(ctk.CTk):
                     break
             if not key:
                 key = clave(ubicacion, articulo)
-                
+            self._mismatch_edit_key = key
+            self._mismatch_edit_old_norm = (normalizar(ubicacion), normalizar(articulo))
             actual = self.mismatches.get(key, 0)
             titulo = f"{articulo} — {descripcion}\n(mal ubicado en {ubicacion})"
             self._abrir_dialogo_edicion(tipo, key, actual, titulo)
@@ -1806,6 +1832,18 @@ class InventarioApp(ctk.CTk):
                     }
             else:
                 destino = {"normal": self.counts, "mismatch": self.mismatches}[tipo]
+                if tipo == "mismatch":
+                    if hasattr(self, "_mismatch_edit_old_norm"):
+                        norm_u, norm_a = self._mismatch_edit_old_norm
+                        stale_keys = [
+                            k for k in list(destino.keys())
+                            if k != key
+                            and normalizar(declave(k)[0]) == norm_u
+                            and normalizar(declave(k)[1]) == norm_a
+                        ]
+                        for sk in stale_keys:
+                            destino.pop(sk, None)
+                        del self._mismatch_edit_old_norm
                 if nuevo_cant == 0:
                     destino.pop(key, None)
                 else:
@@ -1819,6 +1857,11 @@ class InventarioApp(ctk.CTk):
 
         if tipo != "noenc":
             entry_cant.bind("<Return>", guardar)
+        else:
+            entry_cant.bind("<Return>", guardar)
+            entry_art.bind("<Return>", lambda e: entry_ubi.focus_set())
+            entry_ubi.bind("<Return>", lambda e: entry_desc.focus_set())
+            entry_desc.bind("<Return>", lambda e: entry_cant.focus_set())
 
         btns = ctk.CTkFrame(win, fg_color="transparent", width=260, height=45)
         btns.pack(pady=(15, 10))
@@ -2053,16 +2096,19 @@ class InventarioApp(ctk.CTk):
             return
 
         hmac_guardado = data.pop("_hmac", None)
-        if hmac_guardado:
-            hmac_calculado = self._calcular_hmac(data)
-            if not secrets.compare_digest(hmac_guardado, hmac_calculado):
-                _log.warning("SESION | HMAC no coincide - archivo posiblemente manipulado")
-                messagebox.showwarning(
-                    "Integridad comprometida",
-                    "El archivo de sesion parece haber sido modificado.\n"
-                    "Se cargara pero los datos podrian no ser confiables."
-                )
-                data["_hmac"] = hmac_guardado
+        if hmac_guardado is not None:
+            try:
+                hmac_calculado = self._calcular_hmac(data)
+                if not secrets.compare_digest(hmac_guardado, hmac_calculado):
+                    _log.warning("SESION | HMAC no coincide - archivo posiblemente manipulado")
+                    messagebox.showwarning(
+                        "Integridad comprometida",
+                        "El archivo de sesion parece haber sido modificado.\n"
+                        "Se cargara pero los datos podrian no ser confiables."
+                    )
+                    data["_hmac"] = hmac_guardado
+            except Exception:
+                _log.warning("SESION | Error validando HMAC, se ignora verificacion")
 
         ruta = data.get("excel_path")
         if not ruta or not os.path.exists(ruta):
@@ -2393,9 +2439,13 @@ class InventarioApp(ctk.CTk):
 
             for k, veces in mismatches_snapshot.items():
                 ubic, art = declave(k)
+                desc_rows = df_snapshot.loc[df_snapshot["Articulo"] == art, "Descripcion"]
+                unidad_rows = df_snapshot.loc[df_snapshot["Articulo"] == art, "Unidad"]
+                desc_export = desc_rows.iloc[0] if not desc_rows.empty else "-"
+                unidad_export = unidad_rows.iloc[0] if not unidad_rows.empty and unidad_rows.iloc[0] else "-"
                 filas.append({
                     "Almacén": "-", "Ubicación": ubic, "Artículo": art,
-                    "Descripción": self._descripcion_articulo(art), "Unidad": self._grid_articulo_unidad(art),
+                    "Descripción": desc_export, "Unidad": unidad_export,
                     "Existencia esperada": "-", "Cantidad contada": fmt_num(veces),
                     "Diferencia": "-", "Estado": "Mal ubicado",
                 })
