@@ -305,15 +305,18 @@ class InventarioApp(ctk.CTk):
 
     @staticmethod
     def _limpiar_instaladores_viejos():
+        """Elimina .exe viejos del escritorio, excepto el que está corriendo."""
         import glob as _glob
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        exe_actual = os.path.abspath(sys.argv[0]) if getattr(sys, 'frozen', False) else None
+        exe_actual = None
+        if getattr(sys, 'frozen', False):
+            exe_actual = os.path.abspath(sys.executable)
         for f in _glob.glob(os.path.join(desktop, "ExaStock_v*.exe")):
             try:
                 if exe_actual and os.path.abspath(f) == exe_actual:
                     continue
                 os.remove(f)
-            except Exception:
+            except OSError:
                 pass
 
     def _revisar_actualizacion(self):
@@ -354,10 +357,13 @@ class InventarioApp(ctk.CTk):
     def _descargar_actualizacion(self):
         import glob as _glob
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        exe_actual = os.path.abspath(sys.executable) if getattr(sys, 'frozen', False) else None
         for f in _glob.glob(os.path.join(desktop, "ExaStock_v*.exe")):
             try:
+                if exe_actual and os.path.abspath(f) == exe_actual:
+                    continue
                 os.remove(f)
-            except Exception:
+            except OSError:
                 pass
 
         self.set_status("Descargando actualización...")
