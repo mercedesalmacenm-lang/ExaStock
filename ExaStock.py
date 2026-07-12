@@ -58,7 +58,7 @@ def sonido_error():
 # ---------------------------------------------------------------------------
 # Configuración ExaStock
 # ---------------------------------------------------------------------------
-VERSION = "2.0"
+VERSION = "2.1"
 APP_NAME = "ExaStock"
 APP_TITLE = f"ExaStock v{VERSION}"
 
@@ -143,13 +143,22 @@ def _marcar_tutorial_visto():
         pass
 
 
+_CACHE_NORMALIZAR = {}
+
+
 def normalizar(texto: str) -> str:
-    """Quita acentos, espacios y pasa a minúsculas para comparar códigos/columnas."""
-    texto = str(texto).strip().lower()
-    texto = "".join(
-        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    """Quita acentos, espacios y pasa a minúsculas para comparar códigos/columnas.
+    Usa caché para evitar recálculos en operaciones repetitivas."""
+    texto_str = str(texto)
+    if texto_str in _CACHE_NORMALIZAR:
+        return _CACHE_NORMALIZAR[texto_str]
+    limpio = texto_str.strip().lower()
+    limpio = "".join(
+        c for c in unicodedata.normalize("NFD", limpio) if unicodedata.category(c) != "Mn"
     )
-    return texto
+    if len(_CACHE_NORMALIZAR) < 50000:
+        _CACHE_NORMALIZAR[texto_str] = limpio
+    return limpio
 
 
 def normalizar_columna(texto: str) -> str:
@@ -359,6 +368,10 @@ class InventarioApp(ctk.CTk):
         self._ultima_comprobacion = None
 
         self.filtro_categoria = "Todos"
+        self._filtro_timer = None
+        self._pagina_actual = 0
+        self._filas_por_pagina = 500
+        self._total_filas_filtradas = 0
         self.stat_boxes = {}
         self._categoria_por_stat = {
             "total": "Todos",
@@ -880,7 +893,7 @@ class InventarioApp(ctk.CTk):
         ctk.CTkLabel(filtro_frame, text="Buscar / filtrar:").pack(side="left", padx=(0, 10))
         self.entry_filtro = ctk.CTkEntry(filtro_frame, placeholder_text="Artículo, descripción o ubicación...")
         self.entry_filtro.pack(side="left", fill="x", expand=True)
-        self.entry_filtro.bind("<KeyRelease>", lambda e: self.refrescar_tabla())
+        self.entry_filtro.bind("<KeyRelease>", lambda e: self._programar_filtro())
 
         self.btn_solo_ubicacion_activa = ctk.CTkButton(
             filtro_frame, text="Solo ubicación activa", width=170,
@@ -931,6 +944,35 @@ class InventarioApp(ctk.CTk):
 
         self.tree.bind("<Double-1>", self._editar_registro)
 
+        pagination_frame = ctk.CTkFrame(self, fg_color=COLOR_BRAND_LIGHT, corner_radius=0)
+        pagination_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 5))
+
+        self.btn_pagina_anterior = ctk.CTkButton(
+            pagination_frame, text="← Anterior", width=100, height=28,
+            fg_color="#A6ACAF", hover_color="#7F8C8D",
+            font=ctk.CTkFont(size=11), command=self._pagina_anterior
+        )
+        self.btn_pagina_anterior.pack(side="left", padx=4)
+
+        self.lbl_pagina_info = ctk.CTkLabel(
+            pagination_frame, text="",
+            font=ctk.CTkFont(size=11), text_color="#666666"
+        )
+        self.lbl_pagina_info.pack(side="left", padx=10)
+
+        self.btn_pagina_siguiente = ctk.CTkButton(
+            pagination_frame, text="Siguiente →", width=100, height=28,
+            fg_color="#A6ACAF", hover_color="#7F8C8D",
+            font=ctk.CTkFont(size=11), command=self._pagina_siguiente
+        )
+        self.btn_pagina_siguiente.pack(side="left", padx=4)
+
+        self.lbl_total_registros = ctk.CTkLabel(
+            pagination_frame, text="",
+            font=ctk.CTkFont(size=11), text_color="#888888"
+        )
+        self.lbl_total_registros.pack(side="right", padx=10)
+
         # ExaStock status bar
         status_bar = ctk.CTkFrame(self, fg_color=COLOR_BRAND_PRIMARY, corner_radius=0)
         status_bar.pack(side="bottom", fill="x", ipady=2)
@@ -953,6 +995,37 @@ class InventarioApp(ctk.CTk):
         self.lbl_update_status.pack(side="right", padx=12)
 
         self.entry_scan.focus_set()
+
+    def _programar_filtro(self):
+        """Programa el refresh de la tabla con debounce de 300ms."""
+        if self._filtro_timer is not None:
+            self.after_cancel(self._filtro_timer)
+        self._filtro_timer = self.after(300, self._ejecutar_filtro)
+
+    def _ejecutar_filtro(self):
+        self._filtro_timer = None
+        self._pagina_actual = 0
+        self.refrescar_tabla()
+
+    def _pagina_anterior(self):
+        if self._pagina_actual > 0:
+            self._pagina_actual -= 1
+            self.refrescar_tabla()
+
+    def _pagina_siguiente(self):
+        total_paginas = (self._total_filas_filtradas + self._filas_por_pagina - 1) // self._filas_por_pagina
+        if self._pagina_actual < total_paginas - 1:
+            self._pagina_actual += 1
+            self.refrescar_tabla()
+
+    def _actualizar_controles_pagina(self):
+        total_paginas = max(1, (self._total_filas_filtradas + self._filas_por_pagina - 1) // self._filas_por_pagina)
+        self.lbl_pagina_info.configure(text=f"Página {self._pagina_actual + 1} de {total_paginas}")
+        self.lbl_total_registros.configure(text=f"Mostrando {self._total_filas_filtradas} registros")
+        self.btn_pagina_anterior.configure(state="normal" if self._pagina_actual > 0 else "disabled")
+        self.btn_pagina_siguiente.configure(
+            state="normal" if self._pagina_actual < total_paginas - 1 else "disabled"
+        )
 
     def set_status(self, msg):
         if hasattr(self, "lbl_status"):
@@ -1095,12 +1168,14 @@ class InventarioApp(ctk.CTk):
                 messagebox.showerror("Error", f"No se pudo leer el archivo:\n{resultado}")
                 return
 
+            _CACHE_NORMALIZAR.clear()
             self.df = resultado
             self.excel_path = ruta
             self.unidad_actual = str(self.df["Almacen"].iloc[0]) if not self.df.empty else "Sin Unidad"
             self.lbl_titulo.configure(text=f"Unidad - {self.unidad_actual}")
             self.ubicacion_activa = None
             self.archivo_json_activo = None
+            self._pagina_actual = 0
 
             for row in self.tree.get_children():
                 self.tree.delete(row)
@@ -1166,6 +1241,41 @@ class InventarioApp(ctk.CTk):
         self.entry_cantidad.delete(0, "end")
         self.entry_cantidad.insert(0, "1")
 
+    def _actualizar_fila_escaneada(self, key, articulo, descripcion):
+        """Actualiza solo la fila escaneada en el Treeview sin refrescar toda la tabla."""
+        for item_id in self.tree.get_children():
+            valores = self.tree.item(item_id, "values")
+            if len(valores) >= 2 and valores[1] == articulo and valores[0] == self.ubicacion_activa:
+                esperado = float(valores[3]) if valores[3] != "-" else 0
+                contado = self.counts.get(key, 0)
+                tag, estado = self._estado_fila(esperado, contado)
+                diferencia = contado - esperado
+                self.tree.item(item_id, values=(
+                    valores[0], valores[1], valores[2], fmt_num(esperado),
+                    fmt_num(contado), valores[5], fmt_num(diferencia), estado
+                ), tags=(tag,))
+                return
+        self.refrescar_tabla()
+
+    def _actualizar_stats_escalera(self):
+        """Actualiza las estadísticas sin refrescar la tabla completa."""
+        if self.df is None:
+            return
+        total = len(self.df)
+
+        keys = [clave(row.Ubicacion, row.Articulo) for row in self.df.itertuples(index=False)]
+        contados = [self.counts.get(k, 0) for k in keys]
+
+        diferencias = [c - e for c, e in zip(contados, self.df["Existencia"])]
+        n_coinciden = sum(1 for d in diferencias if abs(d) < TOLERANCIA)
+        n_pendientes = sum(1 for c, d in zip(contados, diferencias) if c == 0 and abs(d) >= TOLERANCIA)
+        n_diferencias = total - n_coinciden - n_pendientes
+
+        self._actualizar_stats(
+            total, len(self.counts), n_coinciden, n_diferencias, n_pendientes,
+            len(self.mismatches), len(self.no_encontrados)
+        )
+
     def on_scan(self, event=None):
         codigo_raw = self.entry_scan.get().strip()
         self.entry_scan.delete(0, "end")
@@ -1196,6 +1306,7 @@ class InventarioApp(ctk.CTk):
             self._reset_cantidad()
             self._programar_autoguardado()
             _log.info("UBICACION | %s", self.ubicacion_activa)
+            self._pagina_actual = 0
             self.refrescar_tabla()
             return
 
@@ -1207,6 +1318,7 @@ class InventarioApp(ctk.CTk):
             self._reset_cantidad()
             self._programar_autoguardado()
             _log.info("UBICACION | %s", self.ubicacion_activa)
+            self._pagina_actual = 0
             self.refrescar_tabla()
             return
 
@@ -1224,6 +1336,7 @@ class InventarioApp(ctk.CTk):
             sonido_ok()
             _log.info("SCAN OK | %s | %s x%s | total=%s", self.ubicacion_activa, articulo_original, fmt_num(cantidad), fmt_num(self.counts[k]))
             self.lbl_ultimo.configure(text=f"✔ {articulo_original} (van {fmt_num(self.counts[k])})", text_color="#1F8B4C")
+            self._actualizar_fila_escaneada(k, articulo_original, desc)
 
         elif codigo_norm in self.articulos_all_norm:
             articulo_original = self._buscar_articulo_original_global(codigo_norm)
@@ -1235,6 +1348,7 @@ class InventarioApp(ctk.CTk):
             self.lbl_ultimo.configure(
                 text=f"✘ {articulo_original} no va aquí (va en: {', '.join(ubic_correctas)})", text_color="#A83279"
             )
+            self._actualizar_fila_escaneada(k, articulo_original, desc)
 
         else:
             if codigo_norm in self.no_encontrados:
@@ -1248,7 +1362,7 @@ class InventarioApp(ctk.CTk):
         self._reset_cantidad()
         self._programar_autoguardado()
         self._actualizar_banner()
-        self.refrescar_tabla()
+        self._actualizar_stats_escalera()
 
     def _buscar_articulo_original(self, ubicacion, articulo_norm):
         sub = self.df[self.df["Ubicacion"] == ubicacion]
@@ -1456,10 +1570,12 @@ class InventarioApp(ctk.CTk):
             fg_color="#E4ECFB" if activo else "transparent",
             border_color="#3B82F6" if activo else "#999999",
         )
+        self._pagina_actual = 0
         self.refrescar_tabla()
 
     def _filtrar_por_categoria(self, categoria):
         self.filtro_categoria = categoria
+        self._pagina_actual = 0
         self._resaltar_stat_activo()
         self.refrescar_tabla()
 
@@ -1477,6 +1593,8 @@ class InventarioApp(ctk.CTk):
 
         if self.df is None:
             self._actualizar_stats(0, 0, 0, 0, 0, 0, 0)
+            self._total_filas_filtradas = 0
+            self._actualizar_controles_pagina()
             return
 
         filtro_texto = normalizar(self.entry_filtro.get())
@@ -1485,11 +1603,14 @@ class InventarioApp(ctk.CTk):
 
         total = len(self.df)
         n_coinciden = n_diferencias = n_pendientes = 0
+        filas_visibles = []
+        n_mal_ubicados = 0
+        n_no_encontrados = 0
 
-        for _, fila in self.df.iterrows():
-            ubicacion = fila["Ubicacion"]
-            articulo = fila["Articulo"]
-            esperado = fila["Existencia"]
+        for fila in self.df.itertuples(index=False):
+            ubicacion = fila.Ubicacion
+            articulo = fila.Articulo
+            esperado = fila.Existencia
             k = clave(ubicacion, articulo)
             contado = self.counts.get(k, 0)
             tag, estado = self._estado_fila(esperado, contado)
@@ -1515,15 +1636,15 @@ class InventarioApp(ctk.CTk):
                 continue
 
             if filtro_texto and not any(
-                filtro_texto in normalizar(v) for v in (articulo, fila["Descripcion"], ubicacion)
+                filtro_texto in normalizar(v) for v in (articulo, fila.Descripcion, ubicacion)
             ):
                 continue
 
             diferencia = contado - esperado
-            self.tree.insert("", "end", values=(
-                ubicacion, articulo, fila["Descripcion"], fmt_num(esperado), fmt_num(contado),
-                fila["Unidad"] or "-", fmt_num(diferencia), estado
-            ), tags=(tag,))
+            filas_visibles.append((
+                ubicacion, articulo, fila.Descripcion, fmt_num(esperado), fmt_num(contado),
+                getattr(fila, 'Unidad', None) or "-", fmt_num(diferencia), estado, tag
+            ))
 
         n_mal_ubicados = len(self.mismatches)
         if categoria in ("Todos", "Escaneados", "Mal ubicados"):
@@ -1535,9 +1656,9 @@ class InventarioApp(ctk.CTk):
                     continue
                 desc_art = self._descripcion_articulo(art)
                 unidad_art = self._grid_articulo_unidad(art)
-                self.tree.insert("", "end", values=(
-                    ubic, art, desc_art, "-", fmt_num(veces), unidad_art, "-", "Mal ubicado"
-                ), tags=("malubicado",))
+                filas_visibles.append((
+                    ubic, art, desc_art, "-", fmt_num(veces), unidad_art, "-", "Mal ubicado", "malubicado"
+                ))
 
         if not solo_ubicacion_activa and categoria in ("Todos", "Escaneados", "No encontrados"):
             for codigo_norm, info in self.no_encontrados.items():
@@ -1548,14 +1669,25 @@ class InventarioApp(ctk.CTk):
 
                 if filtro_texto and not any(filtro_texto in normalizar(v) for v in (codigo_norm, ubi_mostrar, desc_mostrar)):
                     continue
-                self.tree.insert("", "end", values=(
-                    ubi_mostrar, texto, desc_mostrar, 0, fmt_num(veces), "-", fmt_num(veces), "No encontrado"
-                ), tags=("noenc",))
+                filas_visibles.append((
+                    ubi_mostrar, texto, desc_mostrar, 0, fmt_num(veces), "-", fmt_num(veces), "No encontrado", "noenc"
+                ))
+
+        self._total_filas_filtradas = len(filas_visibles)
+        inicio = self._pagina_actual * self._filas_por_pagina
+        fin = inicio + self._filas_por_pagina
+
+        for fila in filas_visibles[inicio:fin]:
+            ubicacion, articulo, desc, esperado, contado, unidad, diferencia, estado, tag = fila
+            self.tree.insert("", "end", values=(
+                ubicacion, articulo, desc, esperado, contado, unidad, diferencia, estado
+            ), tags=(tag,))
 
         self._actualizar_stats(
             total, len(self.counts), n_coinciden, n_diferencias, n_pendientes,
             n_mal_ubicados, len(self.no_encontrados)
         )
+        self._actualizar_controles_pagina()
 
     def _actualizar_stats(self, total, escaneados, coinciden, diferencias, pendientes, mal_ubicados, no_encontrados):
         self.stat_vars["total"].configure(text=str(total))
