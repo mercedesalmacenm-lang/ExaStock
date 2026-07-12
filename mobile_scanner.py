@@ -138,7 +138,7 @@ HTML_PAGE = """<!doctype html>
 <style>
   body { font-family: sans-serif; background:#F5EEDE; color:#1B3A57; margin:0; padding:16px; text-align:center; }
   #reader-wrap { position: relative; max-width: 480px; margin: 0 auto; }
-  #reader { width: 100%%; border-radius: 12px; overflow: hidden; }
+  #reader { width: 100%; border-radius: 12px; overflow: hidden; }
   #resultado {
     margin-top: 16px; font-size: 1.6em; min-height: 2em;
     word-break: break-all; font-weight: bold;
@@ -151,7 +151,7 @@ HTML_PAGE = """<!doctype html>
   .conectado { background: #DCF7E3; color: #1F8B4C; }
   .desconectado { background: #FDE8E8; color: #C0392B; }
   #btnFlash {
-    position: absolute; left: 50%%; bottom: 14px; transform: translateX(-50%%);
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
     z-index: 20; display: none; padding: 10px 22px; border-radius: 20px;
     border: none; background: rgba(157,124,232,0.92); color: #fff; font-size: 1em;
   }
@@ -337,8 +337,6 @@ def _verify():
 
 @_app_flask.route("/")
 def _index():
-    if _pairing_code:
-        return HTML_PAGE
     conexion_queue.put(True)
     with _clientes_lock:
         if len(_clientes_conectados) < 50:
