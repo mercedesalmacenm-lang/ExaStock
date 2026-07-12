@@ -879,7 +879,7 @@ class InventarioApp(ctk.CTk):
         self.lbl_titulo.pack(side="left", padx=20, pady=(15, 5))
 
         btn_ayuda = ctk.CTkButton(
-            top, text="❓ Ayuda", width=75, height=28,
+            top, text="❓ Ayuda", height=28,
             fg_color="#A6ACAF", hover_color="#7F8C8D",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self.abrir_ayuda
@@ -888,7 +888,7 @@ class InventarioApp(ctk.CTk):
         crear_tooltip(btn_ayuda, "Información de contacto y versión")
 
         btn_update = ctk.CTkButton(
-            top, text="🔄 Actualizar", width=100, height=28,
+            top, text="🔄 Actualizar", height=28,
             fg_color=COLOR_BRAND_ACCENT, hover_color="#B89430",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._revisar_actualizacion
@@ -903,21 +903,21 @@ class InventarioApp(ctk.CTk):
         grupo_archivo.pack(side="left", padx=20, pady=(0, 15))
 
         btn_cargar = ctk.CTkButton(
-            grupo_archivo, text="Cargar Excel", command=self.cargar_excel, width=120
+            grupo_archivo, text="Cargar Excel", command=self.cargar_excel
         )
         btn_cargar.pack(side="left", padx=4)
         crear_tooltip(btn_cargar, "Selecciona el archivo .xlsx del inventario")
 
         self.btn_exportar = ctk.CTkButton(
             grupo_archivo, text="Exportar resultados", command=self.exportar,
-            width=150, fg_color="#2FA572", hover_color="#268A5E"
+            fg_color="#2FA572", hover_color="#268A5E"
         )
         self.btn_exportar.pack(side="left", padx=4)
         crear_tooltip(self.btn_exportar, "Guarda un Excel con el resumen del conteo")
 
         btn_escanear = ctk.CTkButton(
             grupo_archivo, text="📷 Escanear con celular", command=self.abrir_qr_escaner,
-            width=170, fg_color="#3B82C4", hover_color="#2F6A9E"
+            fg_color="#3B82C4", hover_color="#2F6A9E"
         )
         btn_escanear.pack(side="left", padx=4)
         crear_tooltip(btn_escanear, "Abre la cámara del celular como lector de códigos")
@@ -932,7 +932,7 @@ class InventarioApp(ctk.CTk):
         grupo_peligro.pack(side="left", padx=(20, 20), pady=(0, 15))
 
         btn_nuevo = ctk.CTkButton(
-            grupo_peligro, text="Nuevo conteo", command=self.nuevo_conteo, width=110,
+            grupo_peligro, text="Nuevo conteo", command=self.nuevo_conteo,
             fg_color="#E5533C", hover_color="#C4452F"
         )
         btn_nuevo.pack(side="left", padx=4)
@@ -942,14 +942,14 @@ class InventarioApp(ctk.CTk):
         grupo_sesiones.pack(side="right", padx=20, pady=(0, 15))
 
         btn_guardar = ctk.CTkButton(
-            grupo_sesiones, text="Guardar conteo", command=self.guardar_como, width=130,
+            grupo_sesiones, text="Guardar conteo", command=self.guardar_como,
             fg_color="#8E44AD", hover_color="#6F3589"
         )
         btn_guardar.pack(side="left", padx=4)
         crear_tooltip(btn_guardar, "Guarda el avance del conteo actual con un nombre personalizado")
 
         btn_abrir = ctk.CTkButton(
-            grupo_sesiones, text="Abrir guardado", command=self.abrir_guardado, width=130,
+            grupo_sesiones, text="Abrir guardado", command=self.abrir_guardado,
             fg_color="#16A085", hover_color="#12806B"
         )
         btn_abrir.pack(side="left", padx=4)
@@ -1052,7 +1052,7 @@ class InventarioApp(ctk.CTk):
         crear_tooltip(self.entry_filtro, "Filtra por nombre, código o descripción")
 
         self.btn_solo_ubicacion_activa = ctk.CTkButton(
-            filtro_frame, text="Solo ubicación activa", width=170,
+            filtro_frame, text="Solo ubicación activa",
             fg_color="transparent", border_width=1, border_color="#999999",
             text_color="#333333", hover_color="#EAEAEA",
             command=self._toggle_solo_ubicacion_activa,
@@ -1065,7 +1065,7 @@ class InventarioApp(ctk.CTk):
         pagination_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 5))
 
         self.btn_pagina_anterior = ctk.CTkButton(
-            pagination_frame, text="← Anterior", width=100, height=28,
+            pagination_frame, text="← Anterior", height=28,
             fg_color=COLOR_BRAND_PRIMARY, hover_color="#0D2A45",
             font=ctk.CTkFont(size=11), command=self._pagina_anterior
         )
@@ -1079,7 +1079,7 @@ class InventarioApp(ctk.CTk):
         self.lbl_pagina_info.pack(side="left", padx=10)
 
         self.btn_pagina_siguiente = ctk.CTkButton(
-            pagination_frame, text="Siguiente →", width=100, height=28,
+            pagination_frame, text="Siguiente →", height=28,
             fg_color=COLOR_BRAND_PRIMARY, hover_color="#0D2A45",
             font=ctk.CTkFont(size=11), command=self._pagina_siguiente
         )
