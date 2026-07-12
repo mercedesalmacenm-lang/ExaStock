@@ -155,16 +155,26 @@ def crear_tooltip(widget, texto, delay_ms=500):
         _state["after_id"] = widget.after(delay_ms, _mostrar)
 
     def _mostrar():
-        x = widget.winfo_rootx() + 10
-        y = widget.winfo_rooty() + widget.winfo_height() + 5
         win = ctk.CTkToplevel(widget)
         win.overrideredirect(True)
         win.wm_attributes("-topmost", True)
-        ctk.CTkLabel(
+        lbl = ctk.CTkLabel(
             win, text=texto, fg_color=("#333", "#555"),
             text_color="white", corner_radius=6,
             font=ctk.CTkFont(size=11),
-        ).pack(padx=8, pady=4)
+        )
+        lbl.pack(padx=8, pady=4)
+        win.update_idletasks()
+        tw = win.winfo_reqwidth()
+        th = win.winfo_reqheight()
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = widget.winfo_rootx() + 10
+        y = widget.winfo_rooty() + widget.winfo_height() + 5
+        if x + tw > sw:
+            x = sw - tw - 10
+        if y + th > sh:
+            y = widget.winfo_rooty() - th - 5
         win.geometry(f"+{x}+{y}")
         _state["ventana"] = win
 
