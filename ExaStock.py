@@ -1626,7 +1626,7 @@ class InventarioApp(ctk.CTk):
             entry_cant = ctk.CTkEntry(win, width=140, height=35, justify="center", font=ctk.CTkFont(size=16))
             entry_cant.insert(0, str(fmt_num(actual)))
             entry_cant.pack(pady=5)
-            entry_cant.focus_set()
+            win.after(100, entry_cant.focus_set)
             entry_cant.select_range(0, "end")
         
         # --- CAMPOS PARA NO ENCONTRADOS (Artículo, Ubicación, Descripción, Cantidad) ---
@@ -1663,7 +1663,7 @@ class InventarioApp(ctk.CTk):
             entry_cant.insert(0, str(fmt_num(actual)))
             entry_cant.grid(row=3, column=1, sticky="w", pady=4, ipadx=20)
             
-            entry_cant.focus_set()
+            win.after(100, entry_cant.focus_set)
             entry_cant.select_range(0, "end")
 
         def guardar(_event=None):
@@ -1994,7 +1994,7 @@ class InventarioApp(ctk.CTk):
 
         entry = ctk.CTkEntry(win, width=300, height=38, font=ctk.CTkFont(size=14), justify="center")
         entry.pack(pady=5)
-        entry.focus_set()
+        win.after(100, entry.focus_set)
 
         def guardar(_event=None):
             nombre = entry.get().strip()
