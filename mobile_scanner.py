@@ -331,13 +331,13 @@ HTML_PAGE = """<!doctype html>
 def _verify():
     token = request.args.get("token", "")
     if _pairing_code and secrets.compare_digest(token, _pairing_code):
+        conexion_queue.put(True)
         return {"ok": True}
     return {"ok": False}, 403
 
 
 @_app_flask.route("/")
 def _index():
-    conexion_queue.put(True)
     with _clientes_lock:
         if len(_clientes_conectados) < 50:
             _clientes_conectados.add(request.remote_addr)
