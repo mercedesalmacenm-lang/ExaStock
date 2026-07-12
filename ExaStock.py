@@ -12,6 +12,7 @@ import re
 import urllib.request
 import zipfile
 import hashlib
+import hmac
 import secrets
 import tempfile
 
@@ -2001,7 +2002,7 @@ class InventarioApp(ctk.CTk):
     def _calcular_hmac(data_dict):
         key = InventarioApp._get_session_hmac_key()
         payload = json.dumps(data_dict, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        return hashlib.hmac_new(key, payload, hashlib.sha256).hexdigest()
+        return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
     def _construir_datos_sesion(self, nombre=None):
         data = {
