@@ -11,8 +11,11 @@ import logging.handlers
 import re
 import urllib.request
 import zipfile
+import hashlib
+import secrets
+import tempfile
 
-from mobile_scanner import iniciar_servidor, codigo_queue, conexion_queue, estado_queue, mostrar_ventana_qr
+from mobile_scanner import iniciar_servidor, codigo_queue, conexion_queue, estado_queue, mostrar_ventana_qr, obtener_pairing_code
 
 import pandas as pd
 import customtkinter as ctk
@@ -286,16 +289,23 @@ class InventarioApp(ctk.CTk):
                 data = json.loads(r.read().decode())
             latest = data.get("tag_name", "").lstrip("v")
             if not latest:
-                return None, None, None
+                return None, None, None, None
             url_descarga = None
             for asset in data.get("assets", []):
                 name = asset.get("name", "")
                 if name.endswith(".exe") or name.endswith(".zip"):
                     url_descarga = asset.get("browser_download_url")
                     break
-            return latest, url_descarga, data.get("body", "")
+            notas = data.get("body", "")
+            sha256_esperado = None
+            if notas:
+                for linea in notas.splitlines():
+                    if linea.lower().startswith("sha256:"):
+                        sha256_esperado = linea.split(":", 1)[1].strip()
+                        break
+            return latest, url_descarga, notas, sha256_esperado
         except Exception:
-            return None, None, None
+            return None, None, None, None
 
     @staticmethod
     def _es_version_mayor(v_local, v_remota):
@@ -315,16 +325,37 @@ class InventarioApp(ctk.CTk):
 
     @staticmethod
     def _limpiar_instaladores_viejos():
-        """Elimina .exe viejos del escritorio, excepto el que está corriendo."""
+        """Elimina .exe viejos del escritorio, excepto el que esta corriendo."""
         import glob as _glob
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
         exe_actual = None
         if getattr(sys, 'frozen', False):
             exe_actual = os.path.abspath(sys.executable)
+        viejos = []
         for f in _glob.glob(os.path.join(desktop, "ExaStock_v*.exe")):
             try:
                 if exe_actual and os.path.abspath(f) == exe_actual:
                     continue
+                viejos.append(f)
+            except OSError:
+                pass
+        if not viejos:
+            return
+        try:
+            from tkinter import messagebox
+            nombres = "\n".join(os.path.basename(f) for f in viejos[:5])
+            if len(viejos) > 5:
+                nombres += f"\n... y {len(viejos) - 5} mas"
+            respuesta = messagebox.askyesno(
+                "Limpiar instaladores",
+                f"Se encontraron {len(viejos)} instalador(es) viejo(s) en el Escritorio:\n\n{nombres}\n\n¿Eliminar?"
+            )
+            if not respuesta:
+                return
+        except Exception:
+            return
+        for f in viejos:
+            try:
                 os.remove(f)
             except OSError:
                 pass
@@ -335,13 +366,14 @@ class InventarioApp(ctk.CTk):
 
     def _revisar_actualizacion_hilo(self):
         try:
-            version_remota, url_descarga, notas = self._comprobar_actualizacion()
+            version_remota, url_descarga, notas, sha256_esperado = self._comprobar_actualizacion()
             if not version_remota or not self._es_version_mayor(VERSION, version_remota):
                 self.after(0, lambda: self._actualizar_label_update(""))
                 return
             self._ultima_version = version_remota
             self._url_descarga = url_descarga
             self._notas_version = notas[:300] if notas else ""
+            self._sha256_esperado = sha256_esperado
             self.after(0, lambda: self._preguntar_actualizacion())
         except Exception:
             pass
@@ -365,18 +397,7 @@ class InventarioApp(ctk.CTk):
             self.lbl_update_status.configure(text="")
 
     def _descargar_actualizacion(self):
-        import glob as _glob
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        exe_actual = os.path.abspath(sys.executable) if getattr(sys, 'frozen', False) else None
-        for f in _glob.glob(os.path.join(desktop, "ExaStock_v*.exe")):
-            try:
-                if exe_actual and os.path.abspath(f) == exe_actual:
-                    continue
-                os.remove(f)
-            except OSError:
-                pass
-
-        self.set_status("Descargando actualización...")
+        self.set_status("Descargando actualizacion...")
         hilo = threading.Thread(target=self._descargar_hilo, daemon=True)
         hilo.start()
         self.after(100, lambda: self._mostrar_progreso_descarga(hilo))
@@ -429,18 +450,24 @@ class InventarioApp(ctk.CTk):
             self._update_win.grab_release()
             self._update_win.destroy()
         self.set_status("Listo")
-        if getattr(self, "_descarga_ok", False):
-            nuevo = os.path.join(os.path.expanduser("~"), "Desktop", f"ExaStock_v{self._ultima_version}.exe")
-            respuesta = messagebox.askyesno(
-                "Descarga completada",
-                f"ExaStock v{self._ultima_version} se ha descargado.\n\n"
-                f"Se abrirá automáticamente.\n"
-                "¿Cerrar esta versión antigua ahora?"
+        if getattr(self, "_descarga_hash_error", False):
+            messagebox.showerror(
+                "Error de integridad",
+                "La descarga no coincide con el hash SHA256 publicado.\n\n"
+                f"Hash descargado: {getattr(self, '_descarga_hash', 'N/A')}\n"
+                "Hash esperado: " + (getattr(self, '_sha256_esperado', 'N/A') or 'No publicado') + "\n\n"
+                "La archivo NO se ejecutará por seguridad.\n"
+                "Descárgalo manualmente desde GitHub Releases."
             )
-            if os.path.exists(nuevo):
-                os.startfile(nuevo)
-            if respuesta:
-                self.after(500, self.destroy)
+            self._descarga_hash_error = False
+        elif getattr(self, "_descarga_ok", False):
+            nuevo = os.path.join(os.path.expanduser("~"), "Desktop", f"ExaStock_v{self._ultima_version}.exe")
+            hash_info = f"\n\nSHA256 verificado:\n{getattr(self, '_descarga_hash', 'N/A')}" if getattr(self, '_descarga_hash', None) else ""
+            messagebox.showinfo(
+                "Descarga completada",
+                f"ExaStock v{self._ultima_version} se ha descargado en el Escritorio.{hash_info}\n\n"
+                "Para instalar, cierra esta versión y ejecuta el archivo descargado."
+            )
         else:
             messagebox.showerror(
                 "Error de descarga",
@@ -453,6 +480,7 @@ class InventarioApp(ctk.CTk):
             self._descarga_progreso = 0
             destino = os.path.join(os.path.expanduser("~"), "Desktop", f"ExaStock_v{self._ultima_version}.exe")
             req = urllib.request.Request(self._url_descarga, headers={"User-Agent": "ExaStock/1.0"})
+            hasher = hashlib.sha256()
             with urllib.request.urlopen(req, timeout=120) as r:
                 total = int(r.headers.get("Content-Length", 0))
                 descargado = 0
@@ -462,11 +490,18 @@ class InventarioApp(ctk.CTk):
                         if not chunk:
                             break
                         f.write(chunk)
+                        hasher.update(chunk)
                         descargado += len(chunk)
                         if total > 0:
                             self._descarga_progreso = min(99, (descargado * 100) // total)
-            self._descarga_progreso = 100
-            self._descarga_ok = True
+            self._descarga_hash = hasher.hexdigest()
+            if getattr(self, '_sha256_esperado', None) and self._descarga_hash.lower() != self._sha256_esperado.lower():
+                self._descarga_ok = False
+                self._descarga_hash_error = True
+            else:
+                self._descarga_progreso = 100
+                self._descarga_ok = True
+                self._descarga_hash_error = False
         except Exception:
             self._descarga_ok = False
 
@@ -1365,9 +1400,10 @@ class InventarioApp(ctk.CTk):
             for row in self.tree.get_children():
                 self.tree.delete(row)
 
-            self.counts = {}
-            self.mismatches = {}
-            self.no_encontrados = {}
+        self.counts = {}
+        self.mismatches = {}
+        self.no_encontrados = {}
+        self._counts_lock = threading.Lock()
             self._historial_escaneos = []
             self.entry_filtro.delete(0, "end")
             self.solo_ubicacion_activa = False
@@ -1521,7 +1557,8 @@ class InventarioApp(ctk.CTk):
         if codigo_norm in articulos_aqui:
             articulo_original = self._buscar_articulo_original(self.ubicacion_activa, codigo_norm)
             k = clave(self.ubicacion_activa, articulo_original)
-            self.counts[k] = self.counts.get(k, 0) + cantidad
+            with self._counts_lock:
+                self.counts[k] = self.counts.get(k, 0) + cantidad
             self._historial_escaneos.append({"tipo": "count", "key": k, "cantidad": cantidad})
             desc = self.df.loc[(self.df["Ubicacion"] == self.ubicacion_activa) & (self.df["Articulo"] == articulo_original), "Descripcion"].iloc[0]
             sonido_ok()
@@ -1532,7 +1569,8 @@ class InventarioApp(ctk.CTk):
         elif codigo_norm in self.articulos_all_norm:
             articulo_original = self._buscar_articulo_original_global(codigo_norm)
             k = clave(self.ubicacion_activa, articulo_original)
-            self.mismatches[k] = self.mismatches.get(k, 0) + cantidad
+            with self._counts_lock:
+                self.mismatches[k] = self.mismatches.get(k, 0) + cantidad
             self._historial_escaneos.append({"tipo": "mismatch", "key": k, "cantidad": cantidad})
             ubic_correctas = self.df.loc[self.df["Articulo"] == articulo_original, "Ubicacion"].unique()
             sonido_alerta()
@@ -1543,10 +1581,11 @@ class InventarioApp(ctk.CTk):
             self._actualizar_fila_escaneada(k, articulo_original, desc)
 
         else:
-            if codigo_norm in self.no_encontrados:
-                self.no_encontrados[codigo_norm]["veces"] += cantidad
-            else:
-                self.no_encontrados[codigo_norm] = {"veces": cantidad, "texto": codigo_raw}
+            with self._counts_lock:
+                if codigo_norm in self.no_encontrados:
+                    self.no_encontrados[codigo_norm]["veces"] += cantidad
+                else:
+                    self.no_encontrados[codigo_norm] = {"veces": cantidad, "texto": codigo_raw}
             self._historial_escaneos.append({"tipo": "noencontrado", "codigo_norm": codigo_norm, "cantidad": cantidad})
             sonido_error()
             _log.info("NO ENCONTRADO | %s en %s", codigo_raw, self.ubicacion_activa)
@@ -1566,33 +1605,34 @@ class InventarioApp(ctk.CTk):
         tipo = ultimo["tipo"]
         cantidad = ultimo["cantidad"]
 
-        if tipo == "count":
-            k = ultimo["key"]
-            self.counts[k] = self.counts.get(k, 0) - cantidad
-            if self.counts[k] <= 0:
-                self.counts.pop(k, None)
-            articulo_original = declave(k)[1]
-            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} de {articulo_original}", text_color="#E67E22")
-            if self.ubicacion_activa:
-                desc = self._descripcion_articulo(articulo_original)
-                self._actualizar_fila_escaneada(k, articulo_original, desc)
-        elif tipo == "mismatch":
-            k = ultimo["key"]
-            self.mismatches[k] = self.mismatches.get(k, 0) - cantidad
-            if self.mismatches[k] <= 0:
-                self.mismatches.pop(k, None)
-            articulo_original = declave(k)[1]
-            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} mal ubicado de {articulo_original}", text_color="#E67E22")
-            if self.ubicacion_activa:
-                desc = self._descripcion_articulo(articulo_original)
-                self._actualizar_fila_escaneada(k, articulo_original, desc)
-        elif tipo == "noencontrado":
-            cn = ultimo["codigo_norm"]
-            if cn in self.no_encontrados:
-                self.no_encontrados[cn]["veces"] -= cantidad
-                if self.no_encontrados[cn]["veces"] <= 0:
-                    del self.no_encontrados[cn]
-            self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} no encontrado", text_color="#E67E22")
+        with self._counts_lock:
+            if tipo == "count":
+                k = ultimo["key"]
+                self.counts[k] = self.counts.get(k, 0) - cantidad
+                if self.counts[k] <= 0:
+                    self.counts.pop(k, None)
+                articulo_original = declave(k)[1]
+                self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} de {articulo_original}", text_color="#E67E22")
+                if self.ubicacion_activa:
+                    desc = self._descripcion_articulo(articulo_original)
+                    self._actualizar_fila_escaneada(k, articulo_original, desc)
+            elif tipo == "mismatch":
+                k = ultimo["key"]
+                self.mismatches[k] = self.mismatches.get(k, 0) - cantidad
+                if self.mismatches[k] <= 0:
+                    self.mismatches.pop(k, None)
+                articulo_original = declave(k)[1]
+                self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} mal ubicado de {articulo_original}", text_color="#E67E22")
+                if self.ubicacion_activa:
+                    desc = self._descripcion_articulo(articulo_original)
+                    self._actualizar_fila_escaneada(k, articulo_original, desc)
+            elif tipo == "noencontrado":
+                cn = ultimo["codigo_norm"]
+                if cn in self.no_encontrados:
+                    self.no_encontrados[cn]["veces"] -= cantidad
+                    if self.no_encontrados[cn]["veces"] <= 0:
+                        del self.no_encontrados[cn]
+                self.lbl_ultimo.configure(text=f"↩ Deshecho: {fmt_num(cantidad)} no encontrado", text_color="#E67E22")
 
         self._reset_cantidad()
         self._programar_autoguardado()
@@ -1936,8 +1976,35 @@ class InventarioApp(ctk.CTk):
     # ------------------------------------------------------------------
     # Persistencia de sesión
     # ------------------------------------------------------------------
+    _SESSION_HMAC_KEY = None
+
+    @staticmethod
+    def _get_session_hmac_key():
+        if InventarioApp._SESSION_HMAC_KEY is None:
+            key_file = os.path.join(BASE_DIR, ".session_key")
+            if os.path.exists(key_file):
+                try:
+                    with open(key_file, "rb") as f:
+                        InventarioApp._SESSION_HMAC_KEY = f.read()
+                except Exception:
+                    InventarioApp._SESSION_HMAC_KEY = secrets.token_bytes(32)
+            else:
+                InventarioApp._SESSION_HMAC_KEY = secrets.token_bytes(32)
+                try:
+                    with open(key_file, "wb") as f:
+                        f.write(InventarioApp._SESSION_HMAC_KEY)
+                except Exception:
+                    pass
+        return InventarioApp._SESSION_HMAC_KEY
+
+    @staticmethod
+    def _calcular_hmac(data_dict):
+        key = InventarioApp._get_session_hmac_key()
+        payload = json.dumps(data_dict, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        return hashlib.hmac_new(key, payload, hashlib.sha256).hexdigest()
+
     def _construir_datos_sesion(self, nombre=None):
-        return {
+        data = {
             "nombre": nombre,
             "excel_path": self.excel_path,
             "ubicacion_activa": self.ubicacion_activa,
@@ -1946,6 +2013,8 @@ class InventarioApp(ctk.CTk):
             "no_encontrados": self.no_encontrados,
             "guardado": dt.datetime.now().strftime("%d/%m/%Y %H:%M"),
         }
+        data["_hmac"] = self._calcular_hmac({k: v for k, v in data.items() if k != "_hmac"})
+        return data
 
     def _programar_autoguardado(self):
         """Programa el autoguardado con debounce de 2 segundos.
@@ -1962,13 +2031,16 @@ class InventarioApp(ctk.CTk):
         if self.df is None:
             return
         data = self._construir_datos_sesion()
-        tmp_path = SESSION_FILE + ".tmp"
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=BASE_DIR, suffix=".tmp")
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, SESSION_FILE)
         except Exception:
-            pass
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _revisar_sesion_previa(self):
         if not os.path.exists(SESSION_FILE):
@@ -1979,8 +2051,25 @@ class InventarioApp(ctk.CTk):
         except Exception:
             return
 
+        hmac_guardado = data.pop("_hmac", None)
+        if hmac_guardado:
+            hmac_calculado = self._calcular_hmac(data)
+            if not secrets.compare_digest(hmac_guardado, hmac_calculado):
+                _log.warning("SESION | HMAC no coincide - archivo posiblemente manipulado")
+                messagebox.showwarning(
+                    "Integridad comprometida",
+                    "El archivo de sesion parece haber sido modificado.\n"
+                    "Se cargara pero los datos podrian no ser confiables."
+                )
+                data["_hmac"] = hmac_guardado
+
         ruta = data.get("excel_path")
         if not ruta or not os.path.exists(ruta):
+            return
+
+        ruta_real = os.path.realpath(ruta)
+        if not os.path.splitext(ruta_real)[1].lower() in (".xlsx", ".xls"):
+            _log.warning("SESION | Ruta Excel con extension inesperada: %s", os.path.basename(ruta_real))
             return
 
         continuar = messagebox.askyesno(
@@ -2005,30 +2094,49 @@ class InventarioApp(ctk.CTk):
                     migrado[k_norm] = {"veces": v, "texto": k}
         return migrado
 
+    def _validar_counts_dict(self, data):
+        if not isinstance(data, dict):
+            return {}
+        validated = {}
+        for k, v in data.items():
+            if not isinstance(k, str) or not isinstance(v, (int, float)):
+                continue
+            if SEP not in k:
+                continue
+            validated[k] = max(0, float(v))
+        return validated
+
     def _cargar_datos_en_app(self, data, parent=None):
         ruta_excel = data.get("excel_path")
         if not ruta_excel or not os.path.exists(ruta_excel):
-            messagebox.showwarning("Excel no encontrado", "No encuentro el Excel original. Selecciónalo.", parent=parent)
+            messagebox.showwarning("Excel no encontrado", "No encuentro el Excel original. Seleccionalo.", parent=parent)
             ruta_excel = filedialog.askopenfilename(title="Selecciona el Excel", filetypes=[("Excel", "*.xlsx *.xls")], parent=parent)
             if not ruta_excel:
                 return False
 
+        ruta_real = os.path.realpath(ruta_excel)
+        if not os.path.splitext(ruta_real)[1].lower() in (".xlsx", ".xls"):
+            messagebox.showerror("Archivo invalido", "El archivo debe ser un Excel (.xlsx o .xls).", parent=parent)
+            return False
+
         try:
-            df_raw = pd.read_excel(ruta_excel)
+            df_raw = pd.read_excel(ruta_real)
             self.df = self._procesar_dataframe(df_raw)
-            self.excel_path = ruta_excel
+            self.excel_path = ruta_real
             self.unidad_actual = str(self.df["Almacen"].iloc[0]) if not self.df.empty else "Sin Unidad"
             self.lbl_titulo.configure(text=f"Unidad - {self.unidad_actual}")
             self._indexar()
             self.ubicacion_activa = data.get("ubicacion_activa")
-            self.counts = data.get("counts", {})
-            self.mismatches = data.get("mismatches", {})
+            validated_counts = self._validar_counts_dict(data.get("counts", {}))
+            validated_mismatches = self._validar_counts_dict(data.get("mismatches", {}))
+            self.counts = validated_counts
+            self.mismatches = validated_mismatches
             self.no_encontrados = self._migrar_no_encontrados(data.get("no_encontrados", {}))
             self._historial_escaneos = []
             self._actualizar_banner()
             self.guardar_sesion()
             self.refrescar_tabla()
-            _log.info("SESION CARGADA | %s | excel=%s", data.get("nombre", "-"), os.path.basename(ruta_excel))
+            _log.info("SESION CARGADA | %s | excel=%s", data.get("nombre", "-"), os.path.basename(ruta_real))
             self._avisar_colisiones_ubicacion(parent=parent)
             return True
         except Exception as e:
@@ -2037,7 +2145,12 @@ class InventarioApp(ctk.CTk):
 
     def _nombre_archivo_seguro(self, nombre):
         limpio = "".join(c for c in nombre if c.isalnum() or c in (" ", "-", "_")).strip()
-        return limpio or dt.datetime.now().strftime("conteo_%Y%m%d_%H%M%S")
+        limpio = limpio.strip(".")
+        if not limpio:
+            limpio = dt.datetime.now().strftime("conteo_%Y%m%d_%H%M%S")
+        if len(limpio) > 100:
+            limpio = limpio[:100]
+        return limpio
 
     def guardar_como(self):
         if self.df is None:
@@ -2089,16 +2202,20 @@ class InventarioApp(ctk.CTk):
                 return
 
         data = self._construir_datos_sesion(nombre=nombre.strip())
-        tmp_path = ruta + ".tmp"
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=SESSIONS_DIR, suffix=".tmp")
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, ruta)
-            self.archivo_json_activo = os.path.abspath(ruta)  # Enlazar como archivo activo
+            self.archivo_json_activo = os.path.abspath(ruta)
             _log.info("GUARDADO CON NOMBRE | %s", nombre.strip())
             messagebox.showinfo("Guardado", f"Conteo guardado como \"{nombre.strip()}\".")
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo guardar:\n{e}")
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def abrir_guardado(self):
         os.makedirs(SESSIONS_DIR, exist_ok=True)
