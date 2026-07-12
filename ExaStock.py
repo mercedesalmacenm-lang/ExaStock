@@ -1400,10 +1400,10 @@ class InventarioApp(ctk.CTk):
             for row in self.tree.get_children():
                 self.tree.delete(row)
 
-        self.counts = {}
-        self.mismatches = {}
-        self.no_encontrados = {}
-        self._counts_lock = threading.Lock()
+            self.counts = {}
+            self.mismatches = {}
+            self.no_encontrados = {}
+            self._counts_lock = threading.Lock()
             self._historial_escaneos = []
             self.entry_filtro.delete(0, "end")
             self.solo_ubicacion_activa = False
