@@ -67,7 +67,7 @@ def sonido_error():
 # ---------------------------------------------------------------------------
 # Configuración ExaStock
 # ---------------------------------------------------------------------------
-VERSION = "2.2.1"
+VERSION = "2.3"
 APP_NAME = "ExaStock"
 APP_TITLE = f"ExaStock v{VERSION}"
 
