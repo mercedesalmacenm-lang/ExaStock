@@ -1061,6 +1061,36 @@ class InventarioApp(ctk.CTk):
         crear_tooltip(self.btn_solo_ubicacion_activa, "Filtra para mostrar solo artículos de la ubicación actual")
         self.solo_ubicacion_activa = False
 
+        pagination_frame = ctk.CTkFrame(self, fg_color=COLOR_BRAND_LIGHT, corner_radius=0)
+        pagination_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 5))
+
+        self.btn_pagina_anterior = ctk.CTkButton(
+            pagination_frame, text="← Anterior", width=100, height=28,
+            fg_color=COLOR_BRAND_PRIMARY, hover_color="#0D2A45",
+            font=ctk.CTkFont(size=11), command=self._pagina_anterior
+        )
+        self.btn_pagina_anterior.pack(side="left", padx=4)
+        crear_tooltip(self.btn_pagina_anterior, "Muestra la página anterior de resultados")
+
+        self.lbl_pagina_info = ctk.CTkLabel(
+            pagination_frame, text="",
+            font=ctk.CTkFont(size=11), text_color="#666666"
+        )
+        self.lbl_pagina_info.pack(side="left", padx=10)
+
+        self.btn_pagina_siguiente = ctk.CTkButton(
+            pagination_frame, text="Siguiente →", width=100, height=28,
+            fg_color=COLOR_BRAND_PRIMARY, hover_color="#0D2A45",
+            font=ctk.CTkFont(size=11), command=self._pagina_siguiente
+        )
+        self.btn_pagina_siguiente.pack(side="left", padx=4)
+        crear_tooltip(self.btn_pagina_siguiente, "Muestra la siguiente página de resultados")
+
+        self.lbl_total_registros = ctk.CTkLabel(
+            pagination_frame, text="",
+            font=ctk.CTkFont(size=11), text_color="#888888"
+        )
+        self.lbl_total_registros.pack(side="right", padx=10)
 
         tabla_frame = ctk.CTkFrame(self, fg_color=COLOR_BRAND_LIGHT, corner_radius=12)
         tabla_frame.pack(side="top", fill="both", expand=True, padx=20, pady=(5, 15))
@@ -1100,37 +1130,6 @@ class InventarioApp(ctk.CTk):
         self.tree.tag_configure("noenc", background=COLOR_NOENC)
 
         self.tree.bind("<Double-1>", self._editar_registro)
-
-        pagination_frame = ctk.CTkFrame(self, fg_color=COLOR_BRAND_LIGHT, corner_radius=0)
-        pagination_frame.pack(side="bottom", fill="x", padx=20, pady=(0, 5))
-
-        self.btn_pagina_anterior = ctk.CTkButton(
-            pagination_frame, text="← Anterior", width=100, height=28,
-            fg_color="#A6ACAF", hover_color="#7F8C8D",
-            font=ctk.CTkFont(size=11), command=self._pagina_anterior
-        )
-        self.btn_pagina_anterior.pack(side="left", padx=4)
-        crear_tooltip(self.btn_pagina_anterior, "Muestra la página anterior de resultados")
-
-        self.lbl_pagina_info = ctk.CTkLabel(
-            pagination_frame, text="",
-            font=ctk.CTkFont(size=11), text_color="#666666"
-        )
-        self.lbl_pagina_info.pack(side="left", padx=10)
-
-        self.btn_pagina_siguiente = ctk.CTkButton(
-            pagination_frame, text="Siguiente →", width=100, height=28,
-            fg_color="#A6ACAF", hover_color="#7F8C8D",
-            font=ctk.CTkFont(size=11), command=self._pagina_siguiente
-        )
-        self.btn_pagina_siguiente.pack(side="left", padx=4)
-        crear_tooltip(self.btn_pagina_siguiente, "Muestra la siguiente página de resultados")
-
-        self.lbl_total_registros = ctk.CTkLabel(
-            pagination_frame, text="",
-            font=ctk.CTkFont(size=11), text_color="#888888"
-        )
-        self.lbl_total_registros.pack(side="right", padx=10)
 
         # ExaStock status bar
         status_bar = ctk.CTkFrame(self, fg_color=COLOR_BRAND_PRIMARY, corner_radius=0)
