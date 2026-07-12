@@ -57,7 +57,7 @@ def sonido_error():
 # ---------------------------------------------------------------------------
 # Configuración ExaStock
 # ---------------------------------------------------------------------------
-VERSION = "2.1"
+VERSION = "2.2"
 APP_NAME = "ExaStock"
 APP_TITLE = f"ExaStock v{VERSION}"
 
@@ -143,6 +143,42 @@ def _marcar_tutorial_visto():
 
 
 _CACHE_NORMALIZAR = {}
+
+
+# ── Tooltip helper ────────────────────────────────────────────────────
+def crear_tooltip(widget, texto, delay_ms=500):
+    """Muestra una pista flotante al pasar el mouse sobre *widget*."""
+    _state = {"after_id": None, "ventana": None}
+
+    def _programar(event=None):
+        _cancelar()
+        _state["after_id"] = widget.after(delay_ms, _mostrar)
+
+    def _mostrar():
+        x = widget.winfo_rootx() + 10
+        y = widget.winfo_rooty() + widget.winfo_height() + 5
+        win = ctk.CTkToplevel(widget)
+        win.overrideredirect(True)
+        win.wm_attributes("-topmost", True)
+        ctk.CTkLabel(
+            win, text=texto, fg_color=("#333", "#555"),
+            text_color="white", corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        ).pack(padx=8, pady=4)
+        win.geometry(f"+{x}+{y}")
+        _state["ventana"] = win
+
+    def _cancelar(event=None):
+        if _state["after_id"] is not None:
+            widget.after_cancel(_state["after_id"])
+            _state["after_id"] = None
+        if _state["ventana"] is not None:
+            _state["ventana"].destroy()
+            _state["ventana"] = None
+
+    widget.bind("<Enter>", _programar, add="+")
+    widget.bind("<Leave>", _cancelar, add="+")
+    widget.bind("<ButtonPress>", _cancelar, add="+")
 
 
 def normalizar(texto: str) -> str:
@@ -843,6 +879,7 @@ class InventarioApp(ctk.CTk):
             command=self.abrir_ayuda
         )
         btn_ayuda.pack(side="right", padx=20, pady=(15, 5))
+        crear_tooltip(btn_ayuda, "Información de contacto y versión")
 
         btn_update = ctk.CTkButton(
             top, text="🔄 Actualizar", width=100, height=28,
@@ -851,6 +888,7 @@ class InventarioApp(ctk.CTk):
             command=self._revisar_actualizacion
         )
         btn_update.pack(side="right", pady=(15, 5))
+        crear_tooltip(btn_update, "Busca nuevas versiones en GitHub")
 
         toolbar = ctk.CTkFrame(self, corner_radius=0, fg_color=COLOR_BRAND_LIGHT)
         toolbar.pack(side="top", fill="x")
@@ -858,20 +896,25 @@ class InventarioApp(ctk.CTk):
         grupo_archivo = ctk.CTkFrame(toolbar, fg_color="transparent")
         grupo_archivo.pack(side="left", padx=20, pady=(0, 15))
 
-        ctk.CTkButton(
+        btn_cargar = ctk.CTkButton(
             grupo_archivo, text="Cargar Excel", command=self.cargar_excel, width=120
-        ).pack(side="left", padx=4)
+        )
+        btn_cargar.pack(side="left", padx=4)
+        crear_tooltip(btn_cargar, "Selecciona el archivo .xlsx del inventario")
 
         self.btn_exportar = ctk.CTkButton(
             grupo_archivo, text="Exportar resultados", command=self.exportar,
             width=150, fg_color="#2FA572", hover_color="#268A5E"
         )
         self.btn_exportar.pack(side="left", padx=4)
+        crear_tooltip(self.btn_exportar, "Guarda un Excel con el resumen del conteo")
 
-        ctk.CTkButton(
+        btn_escanear = ctk.CTkButton(
             grupo_archivo, text="📷 Escanear con celular", command=self.abrir_qr_escaner,
             width=170, fg_color="#3B82C4", hover_color="#2F6A9E"
-        ).pack(side="left", padx=4)
+        )
+        btn_escanear.pack(side="left", padx=4)
+        crear_tooltip(btn_escanear, "Abre la cámara del celular como lector de códigos")
 
         self.lbl_estado_escaner = ctk.CTkLabel(
             grupo_archivo, text="📱 Desconectado", font=ctk.CTkFont(size=11),
@@ -882,23 +925,29 @@ class InventarioApp(ctk.CTk):
         grupo_peligro = ctk.CTkFrame(toolbar, fg_color="transparent")
         grupo_peligro.pack(side="left", padx=(20, 20), pady=(0, 15))
 
-        ctk.CTkButton(
+        btn_nuevo = ctk.CTkButton(
             grupo_peligro, text="Nuevo conteo", command=self.nuevo_conteo, width=110,
             fg_color="#E5533C", hover_color="#C4452F"
-        ).pack(side="left", padx=4)
+        )
+        btn_nuevo.pack(side="left", padx=4)
+        crear_tooltip(btn_nuevo, "Borra el progreso actual y empieza un conteo nuevo")
 
         grupo_sesiones = ctk.CTkFrame(toolbar, fg_color="transparent")
         grupo_sesiones.pack(side="right", padx=20, pady=(0, 15))
 
-        ctk.CTkButton(
+        btn_guardar = ctk.CTkButton(
             grupo_sesiones, text="Guardar conteo", command=self.guardar_como, width=130,
             fg_color="#8E44AD", hover_color="#6F3589"
-        ).pack(side="left", padx=4)
+        )
+        btn_guardar.pack(side="left", padx=4)
+        crear_tooltip(btn_guardar, "Guarda el avance del conteo actual con un nombre personalizado")
 
-        ctk.CTkButton(
+        btn_abrir = ctk.CTkButton(
             grupo_sesiones, text="Abrir guardado", command=self.abrir_guardado, width=130,
             fg_color="#16A085", hover_color="#12806B"
-        ).pack(side="left", padx=4)
+        )
+        btn_abrir.pack(side="left", padx=4)
+        crear_tooltip(btn_abrir, "Abre un conteo guardado anteriormente")
 
         self.banner_ubicacion = ctk.CTkFrame(self, fg_color="#FFF3D6", corner_radius=12)
         self.banner_ubicacion.pack(side="top", fill="x", padx=20, pady=(15, 5))
@@ -927,6 +976,15 @@ class InventarioApp(ctk.CTk):
             ("mal_ubicados", "Mal ubicados"),
             ("no_encontrados", "No encontrados"),
         ]
+        stat_tooltips = {
+            "total": "Haz clic para ver todos los registros",
+            "escaneados": "Haz clic para ver solo artículos escaneados",
+            "coinciden": "Haz clic para ver solo los que coinciden",
+            "diferencias": "Haz clic para ver solo los que tienen diferencia",
+            "pendientes": "Haz clic para ver solo los pendientes",
+            "mal_ubicados": "Haz clic para ver solo los mal ubicados",
+            "no_encontrados": "Haz clic para ver solo los no encontrados",
+        }
         for key, label in etiquetas:
             box = ctk.CTkFrame(
                 stats, fg_color="#FBF7EE", corner_radius=10, cursor="hand2",
@@ -943,6 +1001,7 @@ class InventarioApp(ctk.CTk):
             categoria = self._categoria_por_stat[key]
             for widget in (box, val, lbl):
                 widget.bind("<Button-1>", lambda e, c=categoria: self._filtrar_por_categoria(c))
+                crear_tooltip(widget, stat_tooltips[key])
 
         scan_frame = ctk.CTkFrame(self, fg_color="transparent")
         scan_frame.pack(side="top", fill="x", padx=20, pady=10)
@@ -957,6 +1016,7 @@ class InventarioApp(ctk.CTk):
         )
         self.entry_scan.pack(side="left", fill="x", expand=True)
         self.entry_scan.bind("<Return>", self.on_scan)
+        crear_tooltip(self.entry_scan, "Escanear o escribir código de ubicación o artículo")
 
         ctk.CTkLabel(
             scan_frame, text="Cant.:", font=ctk.CTkFont(size=14, weight="bold")
@@ -969,6 +1029,7 @@ class InventarioApp(ctk.CTk):
         self.entry_cantidad.pack(side="left")
         self.entry_cantidad.bind("<Return>", lambda e: self.entry_scan.focus_set())
         self.entry_cantidad.bind("<FocusIn>", lambda e: self.entry_cantidad.select_range(0, "end"))
+        crear_tooltip(self.entry_cantidad, "Cantidad de unidades a registrar")
 
         self.lbl_ultimo = ctk.CTkLabel(scan_frame, text="", font=ctk.CTkFont(size=13))
         self.lbl_ultimo.pack(side="left", padx=15)
@@ -982,6 +1043,7 @@ class InventarioApp(ctk.CTk):
         self.entry_filtro = ctk.CTkEntry(filtro_frame, placeholder_text="Artículo, descripción o ubicación...")
         self.entry_filtro.pack(side="left", fill="x", expand=True)
         self.entry_filtro.bind("<KeyRelease>", lambda e: self._programar_filtro())
+        crear_tooltip(self.entry_filtro, "Filtra por nombre, código o descripción")
 
         self.btn_solo_ubicacion_activa = ctk.CTkButton(
             filtro_frame, text="Solo ubicación activa", width=170,
@@ -990,6 +1052,7 @@ class InventarioApp(ctk.CTk):
             command=self._toggle_solo_ubicacion_activa,
         )
         self.btn_solo_ubicacion_activa.pack(side="left", padx=10)
+        crear_tooltip(self.btn_solo_ubicacion_activa, "Filtra para mostrar solo artículos de la ubicación actual")
         self.solo_ubicacion_activa = False
 
 
@@ -1041,6 +1104,7 @@ class InventarioApp(ctk.CTk):
             font=ctk.CTkFont(size=11), command=self._pagina_anterior
         )
         self.btn_pagina_anterior.pack(side="left", padx=4)
+        crear_tooltip(self.btn_pagina_anterior, "Muestra la página anterior de resultados")
 
         self.lbl_pagina_info = ctk.CTkLabel(
             pagination_frame, text="",
@@ -1054,6 +1118,7 @@ class InventarioApp(ctk.CTk):
             font=ctk.CTkFont(size=11), command=self._pagina_siguiente
         )
         self.btn_pagina_siguiente.pack(side="left", padx=4)
+        crear_tooltip(self.btn_pagina_siguiente, "Muestra la siguiente página de resultados")
 
         self.lbl_total_registros = ctk.CTkLabel(
             pagination_frame, text="",
