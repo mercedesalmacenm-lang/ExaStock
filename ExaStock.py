@@ -2483,6 +2483,78 @@ class InventarioApp(ctk.CTk):
         self._ejecutar_en_hilo("Exportando resultados...", trabajo, al_terminar)
 
 
+# ---------------------------------------------------------------------------
+# Splash Screen
+# ---------------------------------------------------------------------------
+
+def _splash_screen(root, duracion_ms=2500):
+    splash = ctk.CTkToplevel(root)
+    splash.overrideredirect(True)
+    splash.configure(fg_color=COLOR_BRAND_DARK)
+
+    ancho, alto = 420, 280
+    sw = splash.winfo_screenwidth()
+    sh = splash.winfo_screenheight()
+    x = (sw - ancho) // 2
+    y = (sh - alto) // 2
+    splash.geometry(f"{ancho}x{alto}+{x}+{y}")
+    splash.attributes("-topmost", True)
+
+    try:
+        splash.iconbitmap(ruta_recurso("ExacStock.ico"))
+    except Exception:
+        pass
+
+    nombre_frame = ctk.CTkFrame(splash, fg_color="transparent")
+    nombre_frame.pack(pady=(45, 5))
+
+    ctk.CTkLabel(
+        nombre_frame, text="Exa",
+        font=ctk.CTkFont(family="Segoe UI", size=36, weight="bold"),
+        text_color=COLOR_BRAND_ACCENT,
+    ).pack(side="left")
+
+    ctk.CTkLabel(
+        nombre_frame, text="Stock",
+        font=ctk.CTkFont(family="Segoe UI", size=36, weight="normal"),
+        text_color=COLOR_BRAND_ACCENT,
+    ).pack(side="left")
+
+    ctk.CTkLabel(
+        splash, text=f"v{VERSION}",
+        font=ctk.CTkFont(family="Segoe UI", size=14),
+        text_color="#AAAAAA",
+    ).pack(pady=(0, 8))
+
+    ctk.CTkLabel(
+        splash, text="Conteo de inventario preciso y veloz",
+        font=ctk.CTkFont(family="Segoe UI", size=13),
+        text_color="#CCCCCC",
+        justify="center",
+    ).pack(pady=(0, 30))
+
+    barra = ctk.CTkProgressBar(splash, width=260, mode="indeterminate",
+                               progress_color=COLOR_BRAND_ACCENT,
+                               fg_color=COLOR_BRAND_PRIMARY)
+    barra.pack()
+    barra.start()
+
+    def _cerrar_splash():
+        barra.stop()
+        splash.destroy()
+        root.after(50, _mostrar_ventana)
+
+    def _mostrar_ventana():
+        root.deiconify()
+        root.lift()
+        root.focus_force()
+
+    splash.protocol("WM_DELETE_WINDOW", lambda: None)
+    root.after(duracion_ms, _cerrar_splash)
+
+
 if __name__ == "__main__":
     app = InventarioApp()
+    app.withdraw()
+    _splash_screen(app)
     app.mainloop()
