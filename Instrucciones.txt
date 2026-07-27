@@ -15,8 +15,9 @@ CONFIGURACIÓN INICIAL
 
    Opcional: unidad (ej: "PZA", "KG", "LTS")
 
-   IMPORTANTE: elimina las filas de encabezado que BOSS genera al inicio;
-   la primera fila del Excel deben ser los nombres de las columnas.
+   NOTA: La app detecta automáticamente los encabezados, incluso si hay
+   filas de información antes (títulos, fechas, etc). No necesitas
+   eliminar filas manuales.
 
 
 CÓMO USAR LA APP

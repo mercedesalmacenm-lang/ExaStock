@@ -21,6 +21,8 @@ from mobile_scanner import iniciar_servidor, codigo_queue, conexion_queue, estad
 import pandas as pd
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # ---------------------------------------------------------------------------
 # Sonidos de retroalimentación (solo Windows; en otros sistemas no suena,
@@ -67,7 +69,7 @@ def sonido_error():
 # ---------------------------------------------------------------------------
 # Configuración ExaStock
 # ---------------------------------------------------------------------------
-VERSION = "2.3"
+VERSION = "2.4"
 APP_NAME = "ExaStock"
 APP_TITLE = f"ExaStock v{VERSION}"
 
@@ -578,7 +580,7 @@ class InventarioApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.cerrar_aplicacion)
 
         # --- Tutorial primera vez ---
-        self.after(500, self._mostrar_tutorial_si_primera_vez)
+        self.after(4000, self._mostrar_tutorial_si_primera_vez)
 
         # --- Escáner desde celular ---
         self.ip_escaner, self.puerto_escaner = iniciar_servidor()
@@ -601,7 +603,7 @@ class InventarioApp(ctk.CTk):
                 "descripcion": (
                     "Este asistente te guiará por los pasos básicos\n"
                     "para usar la aplicación.\n\n"
-                    "Haz clic en \"Siguiente\" para continuar."
+                    "Haz clic en \"Comenzar\" para continuar."
                 ),
             },
             {
@@ -702,9 +704,16 @@ class InventarioApp(ctk.CTk):
         win.title("Tutorial - ExaStock")
         win.resizable(False, False)
         win.transient(self)
-        self._centrar_toplevel(win, ANCHO, ALTO)
         win.minsize(ANCHO, ALTO)
         win.maxsize(ANCHO, ALTO)
+
+        # Centrar en pantalla
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw - ANCHO) // 2
+        y = (sh - ALTO) // 2
+        win.geometry(f"{ANCHO}x{ALTO}+{x}+{y}")
 
         ctk.CTkLabel(
             win, text="🎓 Tutorial interactivo",
@@ -894,7 +903,7 @@ class InventarioApp(ctk.CTk):
             self.destroy()
 
     def abrir_ayuda(self):
-        ANCHO, ALTO = 420, 380
+        ANCHO, ALTO = 420, 440
         win = ctk.CTkToplevel(self)
         win.configure(fg_color=COLOR_BRAND_LIGHT)
         win.title(f"Acerca de {APP_NAME}")
@@ -908,7 +917,7 @@ class InventarioApp(ctk.CTk):
             win, text=APP_NAME,
             font=ctk.CTkFont(size=24, weight="bold"),
             text_color=COLOR_BRAND_PRIMARY
-        ).pack(pady=(30, 5))
+        ).pack(pady=(25, 5))
 
         ctk.CTkLabel(
             win, text=f"Versión {VERSION}",
@@ -923,7 +932,7 @@ class InventarioApp(ctk.CTk):
             win, text="Conteo de inventario preciso y veloz\npara almacenes y unidades.",
             font=ctk.CTkFont(size=13),
             justify="center"
-        ).pack(pady=(0, 15))
+        ).pack(pady=(0, 12))
 
         info_frame = ctk.CTkFrame(win, fg_color="#EDE8DC", corner_radius=10)
         info_frame.pack(padx=25, fill="x", pady=5)
@@ -936,11 +945,22 @@ class InventarioApp(ctk.CTk):
             font=ctk.CTkFont(size=12), anchor="w"
         ).pack(padx=15, pady=15, fill="x")
 
+        def _abrir_tutorial_desde_ayuda():
+            win.destroy()
+            self._abrir_tutorial()
+
+        ctk.CTkButton(
+            win, text="🎓 Ver tutorial", width=200, height=32,
+            fg_color="#C9A84C", hover_color="#B89430",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=_abrir_tutorial_desde_ayuda
+        ).pack(pady=(10, 5))
+
         ctk.CTkButton(
             win, text="Entendido", width=100,
             fg_color=COLOR_BRAND_PRIMARY, hover_color="#0D2A45",
             command=win.destroy
-        ).pack(pady=(15, 20))           
+        ).pack(pady=(5, 15))           
     
     # ------------------------------------------------------------------
     # Construcción de la interfaz
@@ -1385,6 +1405,44 @@ class InventarioApp(ctk.CTk):
             parent=parent
         )
 
+    @staticmethod
+    def _detectar_fila_encabezados(ruta):
+        """Detecta automáticamente la fila que contiene los encabezados reales.
+        Busca en las primeras 25 filas la fila que contenga las columnas requeridas.
+        Retorna el DataFrame con los encabezados correctos."""
+        # Leer sin headers para examinar todas las filas
+        df_raw = pd.read_excel(ruta, header=None, nrows=25)
+        
+        required_norm = {normalizar_columna(c) for c in REQUIRED_COLS}
+        
+        mejor_fila = None
+        mejor_puntaje = 0
+        
+        for idx in range(min(25, len(df_raw))):
+            fila = df_raw.iloc[idx]
+            # Normalizar cada celda de la fila y comparar con columnas requeridas
+            celdas_norm = set()
+            for celda in fila:
+                if pd.notna(celda):
+                    celdas_norm.add(normalizar_columna(str(celda)))
+            
+            coincidencias = len(required_norm & celdas_norm)
+            if coincidencias > mejor_puntaje:
+                mejor_puntaje = coincidencias
+                mejor_fila = idx
+        
+        if mejor_fila is None or mejor_puntaje < 3:
+            # No se encontraron suficientes columnas, intentar con la primera fila
+            return pd.read_excel(ruta)
+        
+        if mejor_fila == 0:
+            # Ya está en la primera fila
+            return pd.read_excel(ruta)
+        
+        # Re-leer usando la fila detectada como encabezados
+        df_raw = pd.read_excel(ruta, header=mejor_fila)
+        return df_raw
+
     def cargar_excel(self):
         ruta = filedialog.askopenfilename(
             title="Selecciona el reporte de inventario",
@@ -1400,7 +1458,7 @@ class InventarioApp(ctk.CTk):
                     return
 
         def trabajo():
-            df_raw = pd.read_excel(ruta)
+            df_raw = self._detectar_fila_encabezados(ruta)
             return self._procesar_dataframe(df_raw)
 
         def al_terminar(exito, resultado):
@@ -1715,7 +1773,7 @@ class InventarioApp(ctk.CTk):
             self._mismatch_edit_old_norm = (normalizar(ubicacion), normalizar(articulo))
             actual = self.mismatches.get(key, 0)
             titulo = f"{articulo} — {descripcion}\n(mal ubicado en {ubicacion})"
-            self._abrir_dialogo_edicion(tipo, key, actual, titulo)
+            self._abrir_dialogo_edicion(tipo, key, actual, titulo, ubicacion_actual=ubicacion)
         elif estado == "No encontrado":
             tipo = "noenc"
             key = normalizar(articulo)
@@ -1736,7 +1794,7 @@ class InventarioApp(ctk.CTk):
 
     def _abrir_dialogo_edicion(self, tipo, key, actual, titulo, ubicacion_actual="", desc_actual=""):
         ANCHO = 400
-        ALTO = 380 if tipo == "noenc" else 240
+        ALTO = 380 if tipo == "noenc" else (300 if tipo == "mismatch" else 240)
         
         win = ctk.CTkToplevel(self)
         win.configure(fg_color=COLOR_BRAND_LIGHT)
@@ -1755,13 +1813,41 @@ class InventarioApp(ctk.CTk):
         ).pack(pady=(15, 10), padx=20)
 
         # --- CAMPOS NORMALES (Solo cantidad) ---
-        if tipo != "noenc":
+        if tipo == "normal":
             ctk.CTkLabel(win, text="Nueva cantidad contada:").pack(pady=(0, 5))
             entry_cant = ctk.CTkEntry(win, width=140, height=35, justify="center", font=ctk.CTkFont(size=16))
             entry_cant.insert(0, str(fmt_num(actual)))
             entry_cant.pack(pady=5)
             win.after(100, entry_cant.focus_set)
             entry_cant.select_range(0, "end")
+
+        # --- CAMPOS PARA MAL UBICADO (Ubicación correcta + Cantidad) ---
+        elif tipo == "mismatch":
+            frame_campos = ctk.CTkFrame(win, fg_color="transparent")
+            frame_campos.pack(padx=20, fill="x", pady=5)
+            frame_campos.columnconfigure(1, weight=1)
+
+            ctk.CTkLabel(frame_campos, text="Ubicación correcta:").grid(row=0, column=0, sticky="w", pady=8, padx=(0, 10))
+            entry_ubi = ctk.CTkEntry(frame_campos, height=30)
+            entry_ubi.insert(0, str(ubicacion_actual))
+            entry_ubi.grid(row=0, column=1, sticky="ew", pady=8)
+
+            # Listar ubicaciones válidas como sugerencia
+            ubicaciones_validas = sorted(self.ubicaciones_set)
+            if ubicaciones_validas:
+                texto_sugerencias = "Ubicaciones: " + ", ".join(list(ubicaciones_validas)[:8])
+                if len(ubicaciones_validas) > 8:
+                    texto_sugerencias += f"... (+{len(ubicaciones_validas) - 8} más)"
+                ctk.CTkLabel(frame_campos, text=texto_sugerencias, font=ctk.CTkFont(size=10),
+                             text_color="#888888", wraplength=ANCHO - 40).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 4))
+
+            ctk.CTkLabel(frame_campos, text="Cantidad:").grid(row=2, column=0, sticky="w", pady=8, padx=(0, 10))
+            entry_cant = ctk.CTkEntry(frame_campos, height=30, justify="center")
+            entry_cant.insert(0, str(fmt_num(actual)))
+            entry_cant.grid(row=2, column=1, sticky="w", pady=8, ipadx=20)
+
+            win.after(100, entry_ubi.focus_set)
+            entry_ubi.select_range(0, "end")
         
         # --- CAMPOS PARA NO ENCONTRADOS (Artículo, Ubicación, Descripción, Cantidad) ---
         else:
@@ -1769,29 +1855,24 @@ class InventarioApp(ctk.CTk):
             frame_campos.pack(padx=20, fill="x", pady=5)
             frame_campos.columnconfigure(1, weight=1)
 
-            # Campo: Código de Artículo
             ctk.CTkLabel(frame_campos, text="Artículo / Código:").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 10))
             entry_art = ctk.CTkEntry(frame_campos, height=30)
             entry_art.insert(0, str(key if not hasattr(self, "articulos_norm_map") or key not in self.articulos_norm_map else self.articulos_norm_map[key]))
-            # Si el elemento tiene un texto personalizado en el diccionario, cargamos ese (que conserva mayúsculas)
             if key in self.no_encontrados and "texto" in self.no_encontrados[key]:
                 entry_art.delete(0, "end")
                 entry_art.insert(0, str(self.no_encontrados[key]["texto"]))
             entry_art.grid(row=0, column=1, sticky="ew", pady=4)
 
-            # Campo: Ubicación manual
             ctk.CTkLabel(frame_campos, text="Ubicación:").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 10))
             entry_ubi = ctk.CTkEntry(frame_campos, height=30)
             entry_ubi.insert(0, str(ubicacion_actual if ubicacion_actual != "-" else ""))
             entry_ubi.grid(row=1, column=1, sticky="ew", pady=4)
 
-            # Campo: Descripción manual
             ctk.CTkLabel(frame_campos, text="Descripción:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 10))
             entry_desc = ctk.CTkEntry(frame_campos, height=30)
             entry_desc.insert(0, str(desc_actual if "No existe en el reporte" not in desc_actual else ""))
             entry_desc.grid(row=2, column=1, sticky="ew", pady=4)
 
-            # Campo: Cantidad
             ctk.CTkLabel(frame_campos, text="Cantidad:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 10))
             entry_cant = ctk.CTkEntry(frame_campos, height=30, justify="center")
             entry_cant.insert(0, str(fmt_num(actual)))
@@ -1819,7 +1900,6 @@ class InventarioApp(ctk.CTk):
                     messagebox.showerror("Falta código", "El código del artículo no puede quedar vacío.", parent=win)
                     return
 
-                # Borrar clave anterior para evitar duplicados
                 self.no_encontrados.pop(key, None)
 
                 if nuevo_cant > 0:
@@ -1830,20 +1910,52 @@ class InventarioApp(ctk.CTk):
                         "ubicacion_manual": nuevo_ubi if nuevo_ubi else "-",
                         "descripcion_manual": nuevo_desc if nuevo_desc else "— No existe en el reporte (Editado) —"
                     }
+            elif tipo == "mismatch":
+                nueva_ubi = entry_ubi.get().strip()
+                if not nueva_ubi:
+                    messagebox.showerror("Falta ubicación", "Escribe la ubicación correcta.", parent=win)
+                    return
+
+                # Buscar si la nueva ubicación es válida en el inventario
+                nueva_ubi_norm = normalizar(nueva_ubi)
+                ubicacion_real = self.ubicaciones_norm_map.get(nueva_ubi_norm, None)
+                if ubicacion_real is None:
+                    messagebox.showwarning(
+                        "Ubicación no encontrada",
+                        f"\"{nueva_ubi}\" no existe en el inventario.\n"
+                        "Se guardará como registro editado.",
+                        parent=win
+                    )
+                    ubicacion_real = nueva_ubi
+
+                # Limpiar claves anteriores del mismo artículo mal ubicado
+                if hasattr(self, "_mismatch_edit_old_norm"):
+                    norm_u, norm_a = self._mismatch_edit_old_norm
+                    stale_keys = [
+                        k for k in list(self.mismatches.keys())
+                        if normalizar(declave(k)[0]) == norm_u
+                        and normalizar(declave(k)[1]) == norm_a
+                    ]
+                    for sk in stale_keys:
+                        self.mismatches.pop(sk, None)
+                    del self._mismatch_edit_old_norm
+
+                # Verificar si en la nueva ubicación el artículo es correcto o sigue mal ubicado
+                articulo_original = declave(key)[1]
+                articulos_nueva_ubi = self.articulos_por_ubicacion.get(ubicacion_real, set())
+                nueva_key = clave(ubicacion_real, articulo_original)
+
+                if articulo_original in [self.articulos_norm_map.get(a, a) for a in articulos_nueva_ubi]:
+                    # Ahora está en la ubicación correcta → mover a counts
+                    self.counts[nueva_key] = self.counts.get(nueva_key, 0) + nuevo_cant
+                    _log.info("MISMATCH CORREGIDO | %s -> %s x%s", articulo_original, ubicacion_real, fmt_num(nuevo_cant))
+                else:
+                    # Sigue mal ubicado en la nueva ubicación
+                    if nuevo_cant > 0:
+                        self.mismatches[nueva_key] = nuevo_cant
+                    _log.info("MISMATCH EDITADO | %s -> %s x%s", articulo_original, ubicacion_real, fmt_num(nuevo_cant))
             else:
-                destino = {"normal": self.counts, "mismatch": self.mismatches}[tipo]
-                if tipo == "mismatch":
-                    if hasattr(self, "_mismatch_edit_old_norm"):
-                        norm_u, norm_a = self._mismatch_edit_old_norm
-                        stale_keys = [
-                            k for k in list(destino.keys())
-                            if k != key
-                            and normalizar(declave(k)[0]) == norm_u
-                            and normalizar(declave(k)[1]) == norm_a
-                        ]
-                        for sk in stale_keys:
-                            destino.pop(sk, None)
-                        del self._mismatch_edit_old_norm
+                destino = self.counts
                 if nuevo_cant == 0:
                     destino.pop(key, None)
                 else:
@@ -1855,7 +1967,10 @@ class InventarioApp(ctk.CTk):
             self.refrescar_tabla()
             win.destroy()
 
-        if tipo != "noenc":
+        if tipo == "normal":
+            entry_cant.bind("<Return>", guardar)
+        elif tipo == "mismatch":
+            entry_ubi.bind("<Return>", lambda e: entry_cant.focus_set())
             entry_cant.bind("<Return>", guardar)
         else:
             entry_cant.bind("<Return>", guardar)
@@ -2167,7 +2282,7 @@ class InventarioApp(ctk.CTk):
             return False
 
         try:
-            df_raw = pd.read_excel(ruta_real)
+            df_raw = self._detectar_fila_encabezados(ruta_real)
             self.df = self._procesar_dataframe(df_raw)
             self.excel_path = ruta_real
             self.unidad_actual = str(self.df["Almacen"].iloc[0]) if not self.df.empty else "Sin Unidad"
@@ -2420,9 +2535,16 @@ class InventarioApp(ctk.CTk):
         counts_snapshot = dict(self.counts)
         mismatches_snapshot = dict(self.mismatches)
         no_encontrados_snapshot = dict(self.no_encontrados)
+        unidad_actual = self.unidad_actual
 
         def trabajo():
+            from openpyxl import Workbook
+
+            # ── Preparar datos ──
             filas = []
+            n_ok = n_falta = n_sobra = n_pendiente = 0
+            total_esperado = total_contado = 0.0
+
             for _, fila in df_snapshot.iterrows():
                 ubicacion = fila["Ubicacion"]
                 articulo = fila["Articulo"]
@@ -2430,47 +2552,184 @@ class InventarioApp(ctk.CTk):
                 k = clave(ubicacion, articulo)
                 contado = counts_snapshot.get(k, 0)
                 _, estado = self._estado_fila(esperado, contado)
-                filas.append({
-                    "Almacén": fila["Almacen"], "Ubicación": ubicacion, "Artículo": articulo,
-                    "Descripción": fila["Descripcion"], "Unidad": fila["Unidad"] or "-",
-                    "Existencia esperada": fmt_num(esperado), "Cantidad contada": fmt_num(contado),
-                    "Diferencia": fmt_num(contado - esperado), "Estado": estado,
-                })
 
+                if estado == "OK": n_ok += 1
+                elif estado == "Falta": n_falta += 1
+                elif estado == "Sobra": n_sobra += 1
+                else: n_pendiente += 1
+                total_esperado += esperado
+                total_contado += contado
+
+                filas.append([
+                    fila["Almacen"], ubicacion, articulo,
+                    fila["Descripcion"], fila["Unidad"] or "-",
+                    fmt_num(esperado), fmt_num(contado),
+                    fmt_num(contado - esperado), estado,
+                ])
+
+            n_mal_ubic = len(mismatches_snapshot)
+            n_no_enc = len(no_encontrados_snapshot)
             for k, veces in mismatches_snapshot.items():
                 ubic, art = declave(k)
                 desc_rows = df_snapshot.loc[df_snapshot["Articulo"] == art, "Descripcion"]
                 unidad_rows = df_snapshot.loc[df_snapshot["Articulo"] == art, "Unidad"]
                 desc_export = desc_rows.iloc[0] if not desc_rows.empty else "-"
                 unidad_export = unidad_rows.iloc[0] if not unidad_rows.empty and unidad_rows.iloc[0] else "-"
-                filas.append({
-                    "Almacén": "-", "Ubicación": ubic, "Artículo": art,
-                    "Descripción": desc_export, "Unidad": unidad_export,
-                    "Existencia esperada": "-", "Cantidad contada": fmt_num(veces),
-                    "Diferencia": "-", "Estado": "Mal ubicado",
-                })
+                filas.append(["-", ubic, art, desc_export, unidad_export, "-", fmt_num(veces), "-", "Mal ubicado"])
 
             for codigo_norm, info in no_encontrados_snapshot.items():
                 texto = info["texto"]
                 veces = info["veces"]
                 ubi_manual = info.get("ubicacion_manual", "-")
                 desc_manual = info.get("descripcion_manual", "No existe en el reporte")
+                filas.append(["-", ubi_manual, texto, desc_manual, "-", 0, fmt_num(veces), fmt_num(veces), "No encontrado"])
 
-                filas.append({
-                    "Almacén": "-", 
-                    "Ubicación": ubi_manual, 
-                    "Artículo": texto,
-                    "Descripción": desc_manual, 
-                    "Unidad": "-", 
-                    "Existencia esperada": 0,
-                    "Cantidad contada": fmt_num(veces), 
-                    "Diferencia": fmt_num(veces), 
-                    "Estado": "No encontrado",
-                })
+            # ── Estilos ──
+            hdr_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+            hdr_fill = PatternFill(start_color="1A3A5C", end_color="1A3A5C", fill_type="solid")
+            hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_font = Font(name="Segoe UI", size=10)
+            cell_align = Alignment(horizontal="center", vertical="center")
+            cell_align_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            thin_border = Border(
+                left=Side(style="thin", color="CCCCCC"),
+                right=Side(style="thin", color="CCCCCC"),
+                top=Side(style="thin", color="CCCCCC"),
+                bottom=Side(style="thin", color="CCCCCC"),
+            )
+            fill_ok = PatternFill(start_color="C8E6C9", end_color="C8E6C9", fill_type="solid")
+            fill_falta = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
+            fill_sobra = PatternFill(start_color="FFE0B2", end_color="FFE0B2", fill_type="solid")
+            fill_pendiente = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
+            fill_malubic = PatternFill(start_color="E8D5F5", end_color="E8D5F5", fill_type="solid")
+            fill_noenc = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+            fill_res_lbl = PatternFill(start_color="F5F0E8", end_color="F5F0E8", fill_type="solid")
+            fill_section = PatternFill(start_color="1A3A5C", end_color="1A3A5C", fill_type="solid")
+            section_font = Font(name="Segoe UI", size=12, bold=True, color="FFFFFF")
+            estado_fills = {
+                "OK": fill_ok, "Falta": fill_falta, "Sobra": fill_sobra,
+                "Pendiente": fill_pendiente, "Mal ubicado": fill_malubic,
+                "No encontrado": fill_noenc,
+            }
+            colores_fila = {
+                11: "FFCDD2", 12: "FFCDD2", 13: "FFE0B2", 14: "E8D5F5", 15: "E0E0E0",
+            }
 
-            resultado = pd.DataFrame(filas)
-            with pd.ExcelWriter(ruta, engine="openpyxl") as writer:
-                resultado.to_excel(writer, index=False, sheet_name="Resultado conteo")
+            # ── Crear workbook directamente con openpyxl ──
+            wb = Workbook()
+
+            # ═══ Hoja Resumen ═══
+            ws_res = wb.active
+            ws_res.title = "Resumen"
+            ws_res.column_dimensions["A"].width = 35
+            ws_res.column_dimensions["B"].width = 25
+
+            resumen_datos = [
+                (1, 1, "REPORTE DE CONTEO DE INVENTARIO", Font(name="Segoe UI", size=16, bold=True, color="1A3A5C"), None),
+                (3, 1, "Unidad:", Font(name="Segoe UI", size=10, bold=True), fill_res_lbl),
+                (3, 2, unidad_actual, Font(name="Segoe UI", size=10), None),
+                (4, 1, "Fecha:", Font(name="Segoe UI", size=10, bold=True), fill_res_lbl),
+                (4, 2, dt.date.today().strftime("%d/%m/%Y"), Font(name="Segoe UI", size=10), None),
+                (5, 1, "Hora:", Font(name="Segoe UI", size=10, bold=True), fill_res_lbl),
+                (5, 2, dt.datetime.now().strftime("%H:%M:%S"), Font(name="Segoe UI", size=10), None),
+            ]
+            for row, col, val, fnt, fl in resumen_datos:
+                c = ws_res.cell(row=row, column=col, value=val)
+                c.font = fnt
+                if fl: c.fill = fl
+
+            # Sección RESUMEN GENERAL
+            ws_res.merge_cells("A7:B7")
+            ws_res.cell(row=7, column=1, value="RESUMEN GENERAL").font = section_font
+            ws_res.cell(row=7, column=1).fill = fill_section
+            ws_res.cell(row=7, column=2).fill = fill_section
+
+            resumen_stats = [
+                (8, "Total registros en inventario:", len(df_snapshot)),
+                (9, "Artículos contados:", len(counts_snapshot)),
+                (10, "Artículos OK:", n_ok),
+                (11, "Artículos con falta:", n_falta),
+                (12, "Artículos con sobra:", n_sobra),
+                (13, "Artículos pendientes:", n_pendiente),
+                (14, "Artículos mal ubicados:", n_mal_ubic),
+                (15, "Artículos no encontrados:", n_no_enc),
+            ]
+            for row, label, val in resumen_stats:
+                c_lbl = ws_res.cell(row=row, column=1, value=label)
+                c_lbl.font = Font(name="Segoe UI", size=10, bold=True)
+                c_lbl.fill = fill_res_lbl
+                c_lbl.border = thin_border
+                c_val = ws_res.cell(row=row, column=2, value=val)
+                c_val.font = Font(name="Segoe UI", size=10)
+                c_val.border = thin_border
+                c_val.alignment = Alignment(horizontal="right")
+                color = colores_fila.get(row)
+                if color:
+                    c_val.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+
+            # Sección TOTALES DE CANTIDAD
+            ws_res.merge_cells("A17:B17")
+            ws_res.cell(row=17, column=1, value="TOTALES DE CANTIDAD").font = section_font
+            ws_res.cell(row=17, column=1).fill = fill_section
+            ws_res.cell(row=17, column=2).fill = fill_section
+
+            pct_avance = f"{(len(counts_snapshot) / len(df_snapshot) * 100) if len(df_snapshot) > 0 else 0:.1f}%"
+            resumen_totales = [
+                (18, "Total esperado:", fmt_num(total_esperado)),
+                (19, "Total contado:", fmt_num(total_contado)),
+                (20, "Diferencia neta:", fmt_num(total_contado - total_esperado)),
+                (21, "Porcentaje avance:", pct_avance),
+            ]
+            for row, label, val in resumen_totales:
+                c_lbl = ws_res.cell(row=row, column=1, value=label)
+                c_lbl.font = Font(name="Segoe UI", size=10, bold=True)
+                c_lbl.fill = fill_res_lbl
+                c_lbl.border = thin_border
+                c_val = ws_res.cell(row=row, column=2, value=val)
+                c_val.font = Font(name="Segoe UI", size=10)
+                c_val.border = thin_border
+                c_val.alignment = Alignment(horizontal="right")
+
+            # Merge titulo
+            ws_res.merge_cells("A1:B1")
+            ws_res.row_dimensions[1].height = 30
+
+            # ═══ Hoja Resultado ═══
+            ws = wb.create_sheet(title="Resultado conteo")
+            encabezados = ["Almacén", "Ubicación", "Artículo", "Descripción", "Unidad",
+                           "Existencia esperada", "Cantidad contada", "Diferencia", "Estado"]
+
+            for col_idx, enc in enumerate(encabezados, 1):
+                c = ws.cell(row=1, column=col_idx, value=enc)
+                c.font = hdr_font
+                c.fill = hdr_fill
+                c.alignment = hdr_align
+                c.border = thin_border
+
+            for fila_idx, fila_data in enumerate(filas, 2):
+                estado_val = fila_data[8]
+                fill = estado_fills.get(estado_val)
+                for col_idx, val in enumerate(fila_data, 1):
+                    c = ws.cell(row=fila_idx, column=col_idx, value=val)
+                    c.font = cell_font
+                    c.border = thin_border
+                    if fill:
+                        c.fill = fill
+                    if col_idx in (3, 4):
+                        c.alignment = cell_align_left
+                    else:
+                        c.alignment = cell_align
+
+            anchos = {"A": 14, "B": 16, "C": 16, "D": 35, "E": 10, "F": 16, "G": 16, "H": 12, "I": 18}
+            for col_letter, ancho in anchos.items():
+                ws.column_dimensions[col_letter].width = ancho
+
+            if filas:
+                ws.auto_filter.ref = f"A1:I{len(filas) + 1}"
+            ws.freeze_panes = "A2"
+            ws.row_dimensions[1].height = 30
+
+            wb.save(ruta)
             return ruta
 
         def al_terminar(exito, resultado):
