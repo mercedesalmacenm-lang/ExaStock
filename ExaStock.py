@@ -583,10 +583,23 @@ class InventarioApp(ctk.CTk):
         self.after(4000, self._mostrar_tutorial_si_primera_vez)
 
         # --- Escáner desde celular ---
-        self.ip_escaner, self.puerto_escaner = iniciar_servidor()
-        self.after(200, self.revisar_cola_escaner)
-        self.after(500, self.revisar_estado_escaner)
-        _log.info("APP INICIADA | IP=%s:%s", self.ip_escaner, self.puerto_escaner)
+        try:
+            self.ip_escaner, self.puerto_escaner = iniciar_servidor()
+        except RuntimeError as e:
+            _log.error("ERROR iniciando servidor escáner: %s", e)
+            self.after(
+                500,
+                lambda: messagebox.showerror(
+                    "Escáner móvil no disponible",
+                    str(e) + "\n\nCierra la otra copia de ExaStock y vuelve a abrir.",
+                ),
+            )
+            self.ip_escaner = None
+            self.puerto_escaner = None
+        else:
+            self.after(200, self.revisar_cola_escaner)
+            self.after(500, self.revisar_estado_escaner)
+            _log.info("APP INICIADA | IP=%s:%s", self.ip_escaner, self.puerto_escaner)
 
         # --- Actualizador automático ---
         self.after(2000, self._revisar_actualizacion)
@@ -776,10 +789,16 @@ class InventarioApp(ctk.CTk):
         """Revisa cada 200ms si llegó un código escaneado desde el celular."""
         try:
             while True:
-                codigo = codigo_queue.get_nowait()
-                print(f"[DESKTOP] Cola recibio: {codigo!r}", flush=True)
-                _log.info("COLA CELULAR | codigo=%s", codigo)
-                self.procesar_codigo_escaneado(codigo)
+                item = codigo_queue.get_nowait()
+                # El celular envía tuplas (codigo, cantidad); por compatibilidad
+                # también se acepta un string simple (cantidad=1).
+                if isinstance(item, tuple) and len(item) >= 2:
+                    codigo, cantidad = item[0], item[1]
+                else:
+                    codigo, cantidad = item, 1
+                print(f"[DESKTOP] Cola recibio: {codigo!r} x{cantidad}", flush=True)
+                _log.info("COLA CELULAR | codigo=%s cantidad=%s", codigo, cantidad)
+                self.procesar_codigo_escaneado(codigo, cantidad)
         except queue.Empty:
             pass
         except Exception as e:
@@ -789,10 +808,16 @@ class InventarioApp(ctk.CTk):
             _log.exception("Error procesando codigo del celular")
         self.after(200, self.revisar_cola_escaner)
 
-    def procesar_codigo_escaneado(self, codigo):
+    def procesar_codigo_escaneado(self, codigo, cantidad=None):
         """Simula lo que hace el lector físico: mete el código en entry_scan y dispara on_scan()."""
         self.entry_scan.delete(0, "end")
         self.entry_scan.insert(0, codigo)
+        if cantidad is not None and cantidad != 1:
+            try:
+                self.entry_cantidad.delete(0, "end")
+                self.entry_cantidad.insert(0, str(fmt_num(float(cantidad))))
+            except (TypeError, ValueError):
+                pass
         self.on_scan()
 
     def revisar_estado_escaner(self):
@@ -812,6 +837,13 @@ class InventarioApp(ctk.CTk):
 
     def abrir_qr_escaner(self):
         """Abre la ventana con el QR para conectar el celular como escáner."""
+        if not self.ip_escaner or not self.puerto_escaner:
+            messagebox.showerror(
+                "Escáner móvil no disponible",
+                "El servidor del escáner móvil no pudo iniciarse.\n"
+                "Cierra la otra copia de ExaStock y vuelve a abrir la aplicación.",
+            )
+            return
         mostrar_ventana_qr(self, self.ip_escaner, self.puerto_escaner)
         
 

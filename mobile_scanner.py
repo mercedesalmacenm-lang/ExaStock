@@ -53,7 +53,6 @@ import os
 import sys
 import time
 import secrets
-import string
 from functools import wraps
 from flask import Flask, request, send_from_directory, abort
 
@@ -86,7 +85,8 @@ MAX_CODIGO_LENGTH = 200
 
 
 def _generar_pairing_code():
-    alphabet = string.ascii_uppercase + string.digits
+    # Excluye caracteres que se confunden al escribirlos en el celular: 0/O, 1/I/L.
+    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
     return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
@@ -137,74 +137,206 @@ HTML_PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Escanner ExacStock</title>
+<title>ExaStock Scanner</title>
 <style>
-  body { font-family: sans-serif; background:#F5EEDE; color:#1B3A57; margin:0; padding:16px; text-align:center; }
-  #reader-wrap { position: relative; max-width: 480px; margin: 0 auto; }
-  #reader { width: 100%; border-radius: 12px; overflow: hidden; }
-  #resultado {
-    margin-top: 16px; font-size: 1.6em; min-height: 2em;
-    word-break: break-all; font-weight: bold;
+  :root {
+    --navy: #1A3A5C;
+    --navy-dark: #0D1B2A;
+    --navy-hover: #2A4A6E;
+    --gold: #C9A84C;
+    --gold-dark: #B89430;
+    --cream: #F5F0E8;
+    --cream-light: #FBF7EE;
+    --text: #1B3A57;
+    --muted: #8A9BB0;
+    --ok: #1F8B4C;
+    --ok-bg: #DCF7E3;
+    --err: #C0392B;
+    --err-bg: #FDE8E8;
   }
-  #contador { color: #1B3A57; font-size: 0.9em; opacity: 0.75; }
-  #estado-conexion {
-    display: inline-block; margin-top: 10px; padding: 6px 14px;
-    border-radius: 20px; font-size: 0.9em; font-weight: bold;
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: linear-gradient(180deg, #EDE6D8 0%, var(--cream) 40%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
-  .conectado { background: #DCF7E3; color: #1F8B4C; }
-  .desconectado { background: #FDE8E8; color: #C0392B; }
-  #btnFlash {
-    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 20; display: none; padding: 10px 22px; border-radius: 20px;
-    border: none; background: rgba(157,124,232,0.92); color: #fff; font-size: 1em;
+  header {
+    width: 100%;
+    background: linear-gradient(135deg, var(--navy-dark), var(--navy));
+    padding: 18px 20px;
+    text-align: center;
+    box-shadow: 0 3px 14px rgba(13,27,42,0.35);
   }
-  #reconectar-msg { color: #C0392B; margin-top: 8px; font-size: 0.9em; display: none; }
-  #pairing-screen { padding: 40px 20px; }
-  #pairing-screen h2 { margin-bottom: 20px; }
+  header h1 { font-size: 1.7em; letter-spacing: 1px; }
+  header h1 .exa { color: var(--gold); font-weight: 800; }
+  header h1 .stock { color: #fff; font-weight: 300; }
+  header .tagline { color: #B9C9DB; font-size: 0.8em; margin-top: 2px; }
+  main { flex: 1; width: 100%; max-width: 520px; padding: 16px; }
+  .card {
+    background: var(--cream-light);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 6px 24px rgba(13,27,42,0.14);
+    border: 1px solid #E7DFCF;
+  }
+  .section-title {
+    font-size: 1.05em; font-weight: 700; color: var(--navy);
+    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  }
+  .section-title .bar {
+    width: 4px; height: 18px; background: var(--gold); border-radius: 2px;
+  }
+
+  /* ── Pantalla de emparejamiento ── */
+  #pairing-screen { padding: 8px 6px; text-align: center; }
+  #pairing-screen .logo-circle {
+    width: 76px; height: 76px; margin: 6px auto 14px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--navy-dark), var(--navy));
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 18px rgba(13,27,42,0.3);
+  }
+  #pairing-screen .logo-circle span {
+    color: var(--gold); font-size: 2em; font-weight: 800;
+  }
+  #pairing-screen h2 { font-size: 1.25em; color: var(--navy); margin-bottom: 6px; }
+  #pairing-screen p { color: var(--muted); font-size: 0.92em; margin-bottom: 22px; }
   #pairing-input {
-    font-size: 1.8em; text-align: center; letter-spacing: 8px;
-    width: 200px; padding: 12px; border: 2px solid #1B3A57; border-radius: 10px;
-    text-transform: uppercase; font-weight: bold;
+    font-size: 2.1em; text-align: center; letter-spacing: 12px;
+    width: 210px; padding: 14px 8px;
+    border: 2px solid var(--navy); border-radius: 14px;
+    text-transform: uppercase; font-weight: 800;
+    background: #fff; color: var(--navy);
+    outline: none;
   }
+  #pairing-input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,168,76,0.25); }
   #pairing-btn {
-    display: block; margin: 20px auto 0; padding: 12px 40px;
-    background: #1B3A57; color: #fff; border: none; border-radius: 10px;
-    font-size: 1.1em; cursor: pointer;
+    display: block; margin: 22px auto 0; padding: 14px 48px;
+    background: linear-gradient(135deg, var(--navy), var(--navy-hover));
+    color: #fff; border: none; border-radius: 12px;
+    font-size: 1.1em; font-weight: 700; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(26,58,92,0.35);
+    transition: transform 0.1s, box-shadow 0.2s;
   }
+  #pairing-btn:active { transform: scale(0.97); }
+  #pairing-btn:disabled { opacity: 0.6; }
   #pairing-error {
-    color: #fff; margin-top: 15px; display: none; font-size: 1em; font-weight: bold;
-    background: #C0392B; padding: 12px 20px; border-radius: 10px;
+    color: #fff; margin-top: 16px; display: none; font-size: 0.95em; font-weight: 700;
+    background: var(--err); padding: 12px 18px; border-radius: 12px;
     max-width: 280px; margin-left: auto; margin-right: auto;
+    box-shadow: 0 4px 12px rgba(192,57,43,0.3);
   }
-  #pairing-input.error { border-color: #C0392B; animation: shake 0.4s; }
+  #pairing-input.error { border-color: var(--err); animation: shake 0.4s; }
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
     25% { transform: translateX(-8px); }
     75% { transform: translateX(8px); }
   }
+
+  /* ── Pantalla de escáner ── */
+  #scanner-screen { display: none; }
+  #reader-wrap {
+    position: relative; border-radius: 16px; overflow: hidden;
+    box-shadow: 0 6px 24px rgba(13,27,42,0.25);
+    border: 3px solid var(--navy);
+  }
+  #reader { width: 100%; min-height: 260px; background: #000; }
+  #estado-conexion {
+    display: inline-block; margin: 14px auto 4px; padding: 6px 16px;
+    border-radius: 20px; font-size: 0.9em; font-weight: 700;
+  }
+  .conectado { background: var(--ok-bg); color: var(--ok); }
+  .desconectado { background: var(--err-bg); color: var(--err); }
+  #btnFlash {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    z-index: 20; display: none; padding: 10px 24px; border-radius: 22px;
+    border: none; background: rgba(26,58,92,0.92); color: #fff; font-size: 0.95em;
+    font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  #reconectar-msg { color: var(--err); margin-top: 8px; font-size: 0.9em; display: none; font-weight: 600; }
+  #resultado {
+    margin-top: 12px; font-size: 1.5em; min-height: 1.8em;
+    word-break: break-all; font-weight: 800; color: var(--navy);
+    background: #F3EDDF; border-radius: 12px; padding: 10px 14px;
+  }
+  #resultado.ok { background: var(--ok-bg); color: var(--ok); }
+  #resultado.err { background: var(--err-bg); color: var(--err); }
+  #contador {
+    color: var(--muted); font-size: 0.9em; font-weight: 600; margin-top: 4px;
+  }
+
+  /* ── Entrada manual ── */
+  .manual-card { margin-top: 16px; }
+  .manual-row { display: flex; gap: 8px; }
+  #manual-input {
+    flex: 1; padding: 13px 14px; font-size: 1.05em; font-weight: 700;
+    border: 2px solid #D8CFBA; border-radius: 12px; color: var(--navy);
+    background: #fff; outline: none; text-transform: uppercase;
+    min-width: 0;
+  }
+  #manual-input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,168,76,0.25); }
+  #manual-cant {
+    width: 72px; padding: 13px 8px; font-size: 1.05em; font-weight: 700;
+    border: 2px solid #D8CFBA; border-radius: 12px; color: var(--navy);
+    background: #fff; outline: none; text-align: center;
+  }
+  #manual-cant:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,168,76,0.25); }
+  #btn-manual {
+    padding: 0 20px; border: none; border-radius: 12px;
+    background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+    color: var(--navy-dark); font-size: 1em; font-weight: 800; cursor: pointer;
+    box-shadow: 0 3px 10px rgba(184,148,48,0.35);
+    transition: transform 0.1s;
+  }
+  #btn-manual:active { transform: scale(0.97); }
+  .manual-hint { color: var(--muted); font-size: 0.82em; margin-top: 8px; }
 </style>
 </head>
 <body>
-  <div id="pairing-screen">
-    <h1>ExacStock</h1>
-    <h2>Ingresa el codigo de conexion</h2>
-    <p>Mira el codigo en la pantalla de la PC</p>
-    <input id="pairing-input" type="text" maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="------">
-    <button id="pairing-btn" onclick="verificarCodigo()">Conectar</button>
-    <div id="pairing-error">Codigo incorrecto. Intenta de nuevo.</div>
-  </div>
+  <header>
+    <h1><span class="exa">Exa</span><span class="stock">Stock</span></h1>
+    <div class="tagline">Conteo de inventario · Escáner</div>
+  </header>
 
-  <div id="scanner-screen" style="display:none;">
-    <h1>Escanner ExacStock</h1>
-    <div id="reader-wrap">
-      <div id="reader"></div>
-      <button id="btnFlash" style="display:none">Flash</button>
+  <main>
+    <div id="pairing-screen" class="card">
+      <div class="logo-circle"><span>E</span></div>
+      <h2>Conecta tu celular</h2>
+      <p>Ingresa el código que aparece en la pantalla de la PC</p>
+      <input id="pairing-input" type="text" maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="------">
+      <button id="pairing-btn" onclick="verificarCodigo()">Conectar</button>
+      <div id="pairing-error">Codigo incorrecto. Intenta de nuevo.</div>
     </div>
-    <div id="estado-conexion" class="conectado">Conectado a la PC</div>
-    <div id="resultado">Apunta la camara al codigo de barras...</div>
-    <div id="contador">Escaneados: 0</div>
-    <div id="reconectar-msg">Se perdio la conexion. La pagina se recargara automaticamente...</div>
-  </div>
+
+    <div id="scanner-screen">
+      <div class="card" style="padding:14px;">
+        <div id="reader-wrap">
+          <div id="reader"></div>
+          <button id="btnFlash" style="display:none">⚡ Flash</button>
+        </div>
+        <div style="text-align:center;">
+          <div id="estado-conexion" class="conectado">Conectado a la PC</div>
+          <div id="resultado">Apunta la cámara al código de barras...</div>
+          <div id="contador">Escaneados: 0</div>
+          <div id="reconectar-msg">Se perdió la conexión. La página se recargará automáticamente...</div>
+        </div>
+      </div>
+
+      <div class="card manual-card">
+        <div class="section-title"><span class="bar"></span>Entrada manual</div>
+        <div class="manual-row">
+          <input id="manual-input" type="text" maxlength="60" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Código...">
+          <input id="manual-cant" type="number" min="1" step="any" value="1" inputmode="decimal" placeholder="Cant">
+          <button id="btn-manual" onclick="enviarManual()">Enviar</button>
+        </div>
+        <div class="manual-hint">Para códigos difíciles de leer o sin etiqueta, escribe el código y la cantidad.</div>
+      </div>
+    </div>
+  </main>
 
   <script src="/static/barcode-detector.min.js"></script>
   <script src="/static/html5-qrcode.min.js"></script>
@@ -228,32 +360,119 @@ HTML_PAGE = """<!doctype html>
       inp.focus();
     }
 
+    function ocultarErrorCodigo() {
+      const inp = document.getElementById('pairing-input');
+      const err = document.getElementById('pairing-error');
+      inp.classList.remove('error');
+      err.style.display = 'none';
+    }
+
+    function mostrarPantallaScanner() {
+      document.getElementById('pairing-screen').style.display = 'none';
+      document.getElementById('scanner-screen').style.display = 'block';
+      iniciarScanner();
+    }
+
     function verificarCodigo() {
+      ocultarErrorCodigo();
       const code = document.getElementById('pairing-input').value.trim().toUpperCase();
       if (code.length !== 6) return;
-      document.getElementById('pairing-btn').disabled = true;
+      const btn = document.getElementById('pairing-btn');
+      btn.disabled = true;
+      btn.innerText = 'Verificando...';
+      const limpiar = () => {
+        btn.disabled = false;
+        btn.innerText = 'Conectar';
+      };
       fetch('/verify?token=' + encodeURIComponent(code))
         .then(r => r.json())
         .then(data => {
           if (data.ok) {
             pairingToken = code;
-            document.getElementById('pairing-screen').style.display = 'none';
-            document.getElementById('scanner-screen').style.display = 'block';
-            iniciarScanner();
+            mostrarPantallaScanner();
           } else {
             mostrarErrorCodigo('Codigo incorrecto. Intenta de nuevo.');
           }
-          document.getElementById('pairing-btn').disabled = false;
         })
         .catch(() => {
-          mostrarErrorCodigo('Error de conexion. Verifica que estes en la misma red.');
-          document.getElementById('pairing-btn').disabled = false;
-        });
+          mostrarErrorCodigo('Sin conexión a la PC. Verifica que estés en la misma red Wi-Fi y que ExaStock siga abierto. Si la PC se reinició, recarga esta página.');
+        })
+        .finally(limpiar);
     }
 
     document.getElementById('pairing-input').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') verificarCodigo();
     });
+
+    function mostrarFeedback(texto, tipo) {
+      const res = document.getElementById('resultado');
+      res.innerText = texto;
+      res.style.fontSize = texto.length > 20 ? '1.1em' : '1.5em';
+      res.className = tipo || '';
+    }
+
+    function enviarCodigo(codigo, cantidad) {
+      const token = pairingToken || '';
+      const payload = {codigo: codigo};
+      if (cantidad && cantidad !== 1) payload.cantidad = cantidad;
+      fetch('/scan?token=' + encodeURIComponent(token), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      }).then(r => {
+        const cnt = document.getElementById('contador');
+        if (r.ok) {
+          total++;
+          mostrarFeedback(codigo, 'ok');
+          cnt.innerText = 'Enviado a la PC · Escaneados: ' + total;
+          beepOk();
+        } else {
+          mostrarFeedback(codigo + ' · Error ' + r.status, 'err');
+          cnt.style.color = '#C0392B';
+          cnt.innerText = 'Error ' + r.status + ' - Revisa el codigo';
+          setTimeout(() => {
+            cnt.style.color = '';
+            cnt.innerText = 'Escaneados: ' + total;
+          }, 1500);
+        }
+      }).catch(err => {
+        mostrarFeedback('Sin conexión: ' + err, 'err');
+      });
+    }
+
+    function enviarManual() {
+      const inp = document.getElementById('manual-input');
+      const codigo = inp.value.trim();
+      if (!codigo) { inp.focus(); return; }
+      const cantEl = document.getElementById('manual-cant');
+      let cantidad = 1;
+      const cantTexto = cantEl.value.trim().replace(',', '.');
+      if (cantTexto !== '') {
+        const parsed = parseFloat(cantTexto);
+        if (parsed > 0) cantidad = parsed;
+      }
+      enviarCodigo(codigo, cantidad);
+      inp.value = '';
+      cantEl.value = '1';
+      inp.focus();
+      if (navigator.vibrate) navigator.vibrate(50);
+    }
+
+    function beepOk() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 1800;
+        osc.type = 'square';
+        gain.gain.value = 0.5;
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+        osc.stop(ctx.currentTime + 0.15);
+      } catch(e) {}
+    }
 
     function iniciarScanner() {
       if (scannerActivo) {
@@ -265,75 +484,21 @@ HTML_PAGE = """<!doctype html>
 
       const res = document.getElementById('resultado');
       res.innerText = 'Iniciando camara...';
+      res.className = '';
 
       function onScanSuccess(decodedText) {
         const ahora = Date.now();
         if (decodedText === ultimoCodigo && (ahora - ultimoTiempo) < 1500) return;
         ultimoCodigo = decodedText;
         ultimoTiempo = ahora;
-
-        const token = pairingToken || '';
-        fetch('/scan?token=' + encodeURIComponent(token), {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({codigo: decodedText})
-        }).then(r => {
-          const cnt = document.getElementById('contador');
-          if (r.ok) {
-            cnt.style.color = '#1F8B4C';
-            cnt.innerText = 'Enviado a la PC';
-          } else {
-            cnt.style.color = '#C0392B';
-            cnt.innerText = 'Error ' + r.status + ' - Revisa el codigo';
-          }
-          setTimeout(() => {
-            cnt.style.color = '';
-            cnt.innerText = 'Escaneados: ' + total;
-          }, 1500);
-        }).catch(err => {
-          const cnt = document.getElementById('contador');
-          cnt.style.color = '#C0392B';
-          cnt.innerText = 'Sin conexion: ' + err;
-          setTimeout(() => {
-            cnt.style.color = '';
-            cnt.innerText = 'Escaneados: ' + total;
-          }, 2000);
-        });
-
-        total++;
-        res.innerText = decodedText;
-        res.style.fontSize = decodedText.length > 20 ? '1.2em' : '1.6em';
-        document.getElementById('contador').innerText = 'Escaneados: ' + total;
+        enviarCodigo(decodedText);
         if (navigator.vibrate) navigator.vibrate(80);
-        try {
-          const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.value = 1800;
-          osc.type = 'square';
-          gain.gain.value = 0.5;
-          osc.start();
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-          osc.stop(ctx.currentTime + 0.15);
-        } catch(e) {}
       }
 
       try {
         const formatosSoportados = [
           Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.EAN_13,
-          Html5QrcodeSupportedFormats.EAN_8,
-          Html5QrcodeSupportedFormats.UPC_A,
-          Html5QrcodeSupportedFormats.UPC_E,
-          Html5QrcodeSupportedFormats.UPC_EAN_EXTENSION,
           Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.CODE_39,
-          Html5QrcodeSupportedFormats.CODE_93,
-          Html5QrcodeSupportedFormats.CODABAR,
-          Html5QrcodeSupportedFormats.ITF,
-          Html5QrcodeSupportedFormats.DATA_MATRIX,
         ];
 
         const scanner = new Html5Qrcode("reader", {
@@ -350,7 +515,7 @@ HTML_PAGE = """<!doctype html>
           flashPrendido = !flashPrendido;
           flash.apply(flashPrendido);
           document.getElementById('btnFlash').innerText = flashPrendido
-            ? 'Apagar flash' : 'Encender flash';
+            ? '⚡ Apagar flash' : '⚡ Encender flash';
         }
 
         function iniciarPing() {
@@ -397,18 +562,23 @@ HTML_PAGE = """<!doctype html>
             }
           } catch (e) { }
           res.innerText = 'Camara activa. Apunta al codigo de barras...';
+          res.className = '';
           iniciarPing();
         }).catch(err => {
           console.error('Error start:', err);
           res.innerText = 'Error de camara: ' + err;
-          res.style.color = '#C0392B';
+          res.className = 'err';
         });
       } catch(e) {
         console.error('Error init:', e);
         res.innerText = 'Error al iniciar: ' + e;
-        res.style.color = '#C0392B';
+        res.className = 'err';
       }
     }
+
+    document.getElementById('manual-input').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') enviarManual();
+    });
   </script>
 </body>
 </html>
@@ -440,9 +610,21 @@ def _scan():
     codigo = str(data.get("codigo", "")).strip()
     if len(codigo) > MAX_CODIGO_LENGTH:
         codigo = codigo[:MAX_CODIGO_LENGTH]
-    print(f"[SCANNER] raw={data.get('codigo')!r} stripped={codigo!r} printable={all(c.isprintable() for c in codigo) if codigo else False} qsize={codigo_queue.qsize()}", flush=True)
+
+    cantidad = 1
+    try:
+        c = data.get("cantidad", 1)
+        if isinstance(c, bool):
+            raise ValueError
+        cantidad = float(c)
+        if cantidad <= 0 or cantidad > 9999999:
+            cantidad = 1
+    except (TypeError, ValueError):
+        cantidad = 1
+
+    print(f"[SCANNER] raw={data.get('codigo')!r} stripped={codigo!r} cantidad={cantidad} printable={all(c.isprintable() for c in codigo) if codigo else False} qsize={codigo_queue.qsize()}", flush=True)
     if codigo and all(c.isprintable() for c in codigo):
-        codigo_queue.put(codigo)
+        codigo_queue.put((codigo, cantidad))
         print(f"[SCANNER] PUT en cola OK, qsize={codigo_queue.qsize()}", flush=True)
     else:
         print(f"[SCANNER] RECHAZADO: codigo={codigo!r}", flush=True)
@@ -473,19 +655,53 @@ def iniciar_servidor(puerto=5000):
     Arranca el servidor Flask en un hilo en segundo plano con HTTPS
     autofirmado y codigo de emparejamiento de 6 caracteres.
 
+    Si el puerto ya esta en uso (por ejemplo, otra copia de ExaStock
+    todavia abierta), lanza un RuntimeError claro en lugar de fallar
+    en silencio y dejar un codigo de emparejamiento inutil.
+
     Requiere: pip install pyopenssl
     """
     global _pairing_code
     _pairing_code = _generar_pairing_code()
 
-    hilo = threading.Thread(
-        target=lambda: _app_flask.run(
-            host="0.0.0.0", port=puerto, debug=False, use_reloader=False,
-            ssl_context="adhoc",
-        ),
-        daemon=True,
-    )
-    hilo.start()
+    # Detectar el conflicto de puerto ANTES de arrancar Flask, para no
+    # dejar una copia con un codigo de emparejamiento que nadie valida.
+    sonda = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sonda.bind(("0.0.0.0", puerto))
+        sonda.listen(1)
+    except OSError as e:
+        sonda.close()
+        raise RuntimeError(
+            f"No se pudo iniciar el escáner móvil en el puerto {puerto}.\n"
+            f"Probablemente ya hay otra copia de ExaStock abierta usando "
+            f"el mismo puerto.\n\nDetalle: {e}"
+        )
+    sonda.close()
+
+    error_caja = {}
+
+    def _arranque():
+        try:
+            _app_flask.run(
+                host="0.0.0.0", port=puerto, debug=False, use_reloader=False,
+                ssl_context="adhoc",
+            )
+        except Exception as e:
+            error_caja["error"] = e
+
+    threading.Thread(target=_arranque, daemon=True).start()
+
+    # Esperar hasta 5s: si el hilo de arranque reporta un error, fallar claro.
+    for _ in range(50):
+        if "error" in error_caja:
+            raise RuntimeError(
+                f"No se pudo iniciar el escáner móvil en el puerto {puerto}.\n"
+                f"Probablemente ya hay otra copia de ExaStock abierta usando "
+                f"el mismo puerto.\n\nDetalle: {error_caja['error']}"
+            )
+        time.sleep(0.1)
+
     return obtener_ip_local(), puerto
 
 
@@ -545,7 +761,6 @@ def mostrar_ventana_qr(parent, ip, puerto):
     lbl_code.pack(pady=2)
 
     ctk.CTkLabel(ventana, text="(Ingresa este codigo en el celular)", font=("", 10), text_color="#888").pack(pady=(0, 5))
-
     ctk.CTkLabel(ventana, text="O escribe esta direccion en Chrome:").pack(pady=(5, 0))
     campo_url = ctk.CTkEntry(ventana, width=280, justify="center")
     campo_url.insert(0, url)
@@ -579,6 +794,10 @@ def mostrar_ventana_qr(parent, ip, puerto):
             return
         except queue.Empty:
             pass
+        # Si el codigo cambio (servidor reiniciado), actualizar la ventana.
+        actual = obtener_pairing_code()
+        if lbl_code.cget("text") != actual:
+            lbl_code.configure(text=actual)
         ventana.after(300, _revisar_conexion)
 
     ventana.after(300, _revisar_conexion)
