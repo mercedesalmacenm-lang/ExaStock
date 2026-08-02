@@ -1,4 +1,4 @@
-"""
+﻿"""
 Modulo: mobile_scanner.py
 --------------------------
 Convierte el celular en un lector de codigo de barras inalambrico para
@@ -112,15 +112,21 @@ def _agregar_headers_seguridad(response):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self' https:; "
-        "script-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; "
+        "worker-src 'self' blob: https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob:; "
-        "connect-src 'self'; "
+        "connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com; "
         "frame-ancestors 'none'"
     )
     response.headers["Referrer-Policy"] = "no-referrer"
+    # Evitar que el navegador del celular guarde versiones viejas de la
+    # pagina del escaner (causa de bugs "no me actualiza").
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return response
 
 
@@ -132,7 +138,7 @@ def _static(filename):
     return send_from_directory(STATIC_DIR, filename)
 
 
-HTML_PAGE = """<!doctype html>
+HTML_PAGE = r"""<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
@@ -268,6 +274,15 @@ HTML_PAGE = """<!doctype html>
   #contador {
     color: var(--muted); font-size: 0.9em; font-weight: 600; margin-top: 4px;
   }
+  #motor-info {
+    color: #8a8578; font-size: 0.78em; margin-top: 6px; font-weight: 600;
+  }
+  #debug-log {
+    display: none;
+    color: #b03a2e; font-size: 0.75em; margin-top: 6px; text-align: left;
+    white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: auto;
+    font-family: monospace;
+  }
 
   /* ── Entrada manual ── */
   .manual-card { margin-top: 16px; }
@@ -303,6 +318,8 @@ HTML_PAGE = """<!doctype html>
   </header>
 
   <main>
+    <div id="debug-log"></div>
+
     <div id="pairing-screen" class="card">
       <div class="logo-circle"><span>E</span></div>
       <h2>Conecta tu celular</h2>
@@ -322,6 +339,7 @@ HTML_PAGE = """<!doctype html>
           <div id="estado-conexion" class="conectado">Conectado a la PC</div>
           <div id="resultado">Apunta la cámara al código de barras...</div>
           <div id="contador">Escaneados: 0</div>
+          <div id="motor-info"></div>
           <div id="reconectar-msg">Se perdió la conexión. La página se recargará automáticamente...</div>
         </div>
       </div>
@@ -338,8 +356,25 @@ HTML_PAGE = """<!doctype html>
     </div>
   </main>
 
-  <script src="/static/barcode-detector.min.js"></script>
   <script src="/static/html5-qrcode.min.js"></script>
+  <script src="/static/zxing/zxing_reader.js"></script>
+  <script type="module">
+    const MP_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22';
+    (async () => {
+      try {
+        const mod = await import(MP_CDN + '/vision_bundle.mjs');
+        window.__exaMediaPipe = {
+          BarcodeScanner: mod.BarcodeScanner,
+          FilesetResolver: mod.FilesetResolver,
+          CDN: MP_CDN,
+        };
+      } catch (e) {
+        console.error('MediaPipe no disponible:', e);
+        window.__exaMediaPipe = null;
+        window.__exaMediaPipeError = String(e && e.message ? e.message : e);
+      }
+    })();
+  </script>
   <script>
     let total = 0;
     let ultimoCodigo = "";
@@ -347,6 +382,8 @@ HTML_PAGE = """<!doctype html>
     let pingInterval = null;
     let pairingToken = "";
     let scannerActivo = null;
+
+    logMsg('Pagina cargada · v3.0 · ' + new Date().toLocaleTimeString());
 
     function mostrarErrorCodigo(msg) {
       const inp = document.getElementById('pairing-input');
@@ -368,6 +405,7 @@ HTML_PAGE = """<!doctype html>
     }
 
     function mostrarPantallaScanner() {
+      logMsg('mostrarPantallaScanner()');
       document.getElementById('pairing-screen').style.display = 'none';
       document.getElementById('scanner-screen').style.display = 'block';
       iniciarScanner();
@@ -376,7 +414,11 @@ HTML_PAGE = """<!doctype html>
     function verificarCodigo() {
       ocultarErrorCodigo();
       const code = document.getElementById('pairing-input').value.trim().toUpperCase();
-      if (code.length !== 6) return;
+      logMsg('Conectar presionado, codigo: "' + code + '" (' + code.length + ' chars)');
+      if (code.length !== 6) {
+        logMsg('Codigo con largo invalido, ignorando');
+        return;
+      }
       const btn = document.getElementById('pairing-btn');
       btn.disabled = true;
       btn.innerText = 'Verificando...';
@@ -384,17 +426,24 @@ HTML_PAGE = """<!doctype html>
         btn.disabled = false;
         btn.innerText = 'Conectar';
       };
+      logMsg('Enviando /verify...');
       fetch('/verify?token=' + encodeURIComponent(code))
-        .then(r => r.json())
+        .then(r => {
+          logMsg('Respuesta /verify status: ' + r.status);
+          return r.json();
+        })
         .then(data => {
+          logMsg('Respuesta /verify data: ' + JSON.stringify(data));
           if (data.ok) {
             pairingToken = code;
+            logMsg('Codigo valido, abriendo escaner...');
             mostrarPantallaScanner();
           } else {
             mostrarErrorCodigo('Codigo incorrecto. Intenta de nuevo.');
           }
         })
-        .catch(() => {
+        .catch(err => {
+          logError('Error /verify: ' + (err && err.message ? err.message : err));
           mostrarErrorCodigo('Sin conexión a la PC. Verifica que estés en la misma red Wi-Fi y que ExaStock siga abierto. Si la PC se reinició, recarga esta página.');
         })
         .finally(limpiar);
@@ -474,7 +523,34 @@ HTML_PAGE = """<!doctype html>
       } catch(e) {}
     }
 
-    function iniciarScanner() {
+    function mostrarMotor(nombre) {
+      const el = document.getElementById('motor-info');
+      if (el) el.innerText = 'Motor: ' + nombre + ' · v3.0';
+    }
+
+    function logMsg(msg) {
+      console.log('[scanner]', msg);
+      const el = document.getElementById('debug-log');
+      if (el) {
+        el.innerText = (el.innerText ? el.innerText + '\n' : '') + msg;
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+    function logError(msg) {
+      console.error('[scanner]', msg);
+      logMsg('ERROR: ' + msg);
+      const el = document.getElementById('debug-log');
+      if (el) el.style.display = 'block';
+    }
+    window.addEventListener('error', function(e) {
+      logError('Error JS: ' + (e && e.message ? e.message : e));
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      const r = e && e.reason;
+      logError('Promesa rechazada: ' + (r && r.message ? r.message : r));
+    });
+
+    async function iniciarScanner() {
       if (scannerActivo) {
         try { scannerActivo.stop(); } catch(e) {}
         scannerActivo = null;
@@ -488,14 +564,34 @@ HTML_PAGE = """<!doctype html>
 
       function onScanSuccess(decodedText) {
         const ahora = Date.now();
-        if (decodedText === ultimoCodigo && (ahora - ultimoTiempo) < 1500) return;
+        if (decodedText === ultimoCodigo && (ahora - ultimoTiempo) < 3000) return;
         ultimoCodigo = decodedText;
         ultimoTiempo = ahora;
         enviarCodigo(decodedText);
         if (navigator.vibrate) navigator.vibrate(80);
       }
 
-      try {
+      function iniciarPing() {
+        pingInterval = setInterval(() => {
+          fetch('/ping?token=' + encodeURIComponent(pairingToken), { method: 'GET' })
+            .then(r => {
+              if (!r.ok) throw new Error('no ok');
+              document.getElementById('estado-conexion').innerText = 'Conectado a la PC';
+              document.getElementById('estado-conexion').className = 'conectado';
+              document.getElementById('reconectar-msg').style.display = 'none';
+            })
+            .catch(() => {
+              document.getElementById('estado-conexion').innerText = 'Desconectado';
+              document.getElementById('estado-conexion').className = 'desconectado';
+              document.getElementById('reconectar-msg').style.display = 'block';
+              clearInterval(pingInterval);
+              setTimeout(() => location.reload(), 5000);
+            });
+        }, 3000);
+      }
+
+      // ── Motor offline: html5-qrcode con decodificador ZXing propio ──
+      function iniciarConHtml5Qrcode() {
         const formatosSoportados = [
           Html5QrcodeSupportedFormats.QR_CODE,
           Html5QrcodeSupportedFormats.CODE_128,
@@ -503,7 +599,7 @@ HTML_PAGE = """<!doctype html>
 
         const scanner = new Html5Qrcode("reader", {
           formatsToSupport: formatosSoportados,
-          experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+          experimentalFeatures: { useBarCodeDetectorIfSupported: false },
           verbose: true,
         });
         scannerActivo = scanner;
@@ -518,37 +614,18 @@ HTML_PAGE = """<!doctype html>
             ? '⚡ Apagar flash' : '⚡ Encender flash';
         }
 
-        function iniciarPing() {
-          pingInterval = setInterval(() => {
-            fetch('/ping?token=' + encodeURIComponent(pairingToken), { method: 'GET' })
-              .then(r => {
-                if (!r.ok) throw new Error('no ok');
-                document.getElementById('estado-conexion').innerText = 'Conectado a la PC';
-                document.getElementById('estado-conexion').className = 'conectado';
-                document.getElementById('reconectar-msg').style.display = 'none';
-              })
-              .catch(() => {
-                document.getElementById('estado-conexion').innerText = 'Desconectado';
-                document.getElementById('estado-conexion').className = 'desconectado';
-                document.getElementById('reconectar-msg').style.display = 'block';
-                clearInterval(pingInterval);
-                setTimeout(() => location.reload(), 5000);
-              });
-          }, 3000);
-        }
-
         scanner.start(
           { facingMode: "environment" },
           {
             fps: 15,
-            qrbox: { width: 300, height: 170 },
-            aspectRatio: 1.0,
             disableFlip: false,
+            qrbox: function(vw, vh) {
+              return { width: Math.floor(vw * 0.94), height: Math.min(80, Math.floor(vh * 0.22)) };
+            },
             videoConstraints: {
               facingMode: "environment",
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              advanced: [{ focusMode: "continuous" }],
+              width: { ideal: 640 },
+              height: { ideal: 480 },
             },
           },
           onScanSuccess
@@ -563,17 +640,274 @@ HTML_PAGE = """<!doctype html>
           } catch (e) { }
           res.innerText = 'Camara activa. Apunta al codigo de barras...';
           res.className = '';
+          mostrarMotor('ZXing (lento, respaldo)');
+          logMsg('ZXing iniciado OK');
           iniciarPing();
         }).catch(err => {
           console.error('Error start:', err);
           res.innerText = 'Error de camara: ' + err;
           res.className = 'err';
+          logError('ZXing error: ' + (err && err.message ? err.message : err));
         });
-      } catch(e) {
-        console.error('Error init:', e);
-        res.innerText = 'Error al iniciar: ' + e;
-        res.className = 'err';
       }
+
+      // ── Motor offline: ZXing compilado a WASM (rapido, sin internet) ──
+      async function iniciarConZxingWasm() {
+        const readerEl = document.getElementById('reader');
+        readerEl.innerHTML = '';
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('playsinline', '');
+        video.setAttribute('muted', '');
+        video.style.width = '100%';
+        video.style.display = 'block';
+        video.style.objectFit = 'cover';
+        readerEl.appendChild(video);
+
+        const btnFlash = document.getElementById('btnFlash');
+        btnFlash.style.display = 'none';
+
+        if (typeof ZXingWASM === 'undefined') {
+          throw new Error('ZXingWASM no cargo');
+        }
+        try {
+          ZXingWASM.setZXingModuleOverrides({
+            locateFile: (p) => '/static/zxing/' + p,
+          });
+          await ZXingWASM.getZXingModule();
+        } catch (e) {
+          throw new Error('init WASM: ' + (e && e.message ? e.message : e));
+        }
+
+        res.innerText = 'Cargando camara...';
+        res.className = '';
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+        video.srcObject = stream;
+        scannerActivo = {
+          stop: () => {
+            stream.getTracks().forEach(t => t.stop());
+            readerEl.innerHTML = '';
+            if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+          }
+        };
+        video.onloadedmetadata = () => video.play().catch(() => {});
+        video.play().catch(() => {});
+
+        const track = stream.getVideoTracks()[0];
+        if (track && track.getCapabilities && track.getCapabilities().torch) {
+          let flashPrendido = false;
+          btnFlash.style.display = 'inline-block';
+          btnFlash.onclick = () => {
+            flashPrendido = !flashPrendido;
+            track.applyConstraints({ advanced: [{ torch: flashPrendido }] }).catch(() => {});
+            btnFlash.innerText = flashPrendido ? '⚡ Apagar flash' : '⚡ Encender flash';
+          };
+        }
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const MAX_W = 960;
+        let zxTrabajando = false;
+        let zxContador = 0;
+
+        function frame() {
+          if (!scannerActivo || video.readyState < 2 || video.videoWidth === 0) {
+            if (scannerActivo) requestAnimationFrame(frame);
+            return;
+          }
+          zxContador++;
+          if (zxContador % 3 === 0 && !zxTrabajando) {
+            zxTrabajando = true;
+            try {
+              const escala = Math.min(1, MAX_W / video.videoWidth);
+              canvas.width = Math.max(1, Math.round(video.videoWidth * escala));
+              canvas.height = Math.max(1, Math.round(video.videoHeight * escala));
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              ZXingWASM.readBarcodesFromImageData({
+                data: new Uint8Array(imageData.data),
+                width: canvas.width,
+                height: canvas.height,
+              }, {
+                formats: ['Code128'],
+                tryHarder: false,
+                tryInvert: false,
+                minLineCount: 3,
+              }).then(results => {
+                if (results) {
+                  for (const r of results) {
+                    if (r && r.text && r.format === 'Code128') onScanSuccess(r.text);
+                  }
+                }
+              }).catch(() => {}).finally(() => { zxTrabajando = false; });
+            } catch (e) {
+              zxTrabajando = false;
+            }
+          }
+          if (scannerActivo) requestAnimationFrame(frame);
+        }
+
+        res.innerText = 'Camara activa. Apunta al codigo de barras...';
+        res.className = '';
+        mostrarMotor('ZXing (WASM rapido)');
+        logMsg('ZXing WASM iniciado OK');
+        iniciarPing();
+        requestAnimationFrame(frame);
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        logMsg('Sin internet detectado. Saltando MediaPipe, usando ZXing WASM offline.');
+        try {
+          await iniciarConZxingWasm();
+        } catch (e) {
+          logError('ZXing WASM fallo, respaldo html5-qrcode: ' + (e && e.message ? e.message : e));
+          iniciarConHtml5Qrcode();
+        }
+        return;
+      }
+
+      const mp = await esperarMediaPipe(3000);
+      if (mp) {
+        logMsg('MediaPipe disponible, iniciando...');
+        iniciarConMediaPipe(mp);
+        return;
+      }
+      logMsg('MediaPipe no disponible: ' + (window.__exaMediaPipeError || 'sin internet o bloqueado') + '. Usando ZXing WASM offline.');
+      try {
+        await iniciarConZxingWasm();
+      } catch (e) {
+        logError('ZXing WASM fallo, respaldo html5-qrcode: ' + (e && e.message ? e.message : e));
+        iniciarConHtml5Qrcode();
+      }
+    }
+
+    // Espera hasta que el modulo de MediaPipe (Google) termine de cargar.
+    // Devuelve null si no esta disponible (sin internet o fallo).
+    function esperarMediaPipe(ms) {
+      return new Promise(resolve => {
+        if (window.__exaMediaPipe) { resolve(window.__exaMediaPipe); return; }
+        if (window.__exaMediaPipe === null) { resolve(null); return; }
+        const inicio = Date.now();
+        const iv = setInterval(() => {
+          if (window.__exaMediaPipe) { clearInterval(iv); resolve(window.__exaMediaPipe); return; }
+          if (window.__exaMediaPipe === null || Date.now() - inicio > ms) {
+            clearInterval(iv);
+            resolve(window.__exaMediaPipe || null);
+          }
+        }, 100);
+      });
+    }
+
+    // ── Motor principal: MediaPipe BarcodeScanner de Google (WASM) ──
+    function iniciarConMediaPipe(mp) {
+      const reader = document.getElementById('reader');
+      reader.innerHTML = '';
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', '');
+      video.setAttribute('muted', '');
+      video.style.width = '100%';
+      video.style.display = 'block';
+      video.style.objectFit = 'cover';
+      reader.appendChild(video);
+
+      const btnFlash = document.getElementById('btnFlash');
+      btnFlash.style.display = 'none';
+      let flashPrendido = false;
+
+      res.innerText = 'Cargando lector de Google (la primera vez tarda unos segundos)...';
+      res.className = '';
+
+      let barcodeScanner = null;
+      let mpUltimoTiempo = -1;
+
+      (async () => {
+        try {
+          const vision = await mp.FilesetResolver.forVisionTasks(mp.CDN + '/wasm');
+          barcodeScanner = await mp.BarcodeScanner.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/barcode_scanner/barcode_scanner/float16/latest/barcode_scanner.tflite',
+            },
+            runningMode: 'VIDEO',
+          });
+        } catch (e) {
+          console.error('Error MediaPipe:', e);
+          res.innerText = 'Error cargando el lector. Usando respaldo...';
+          res.className = 'err';
+          logError('MediaPipe fallo: ' + (e && e.message ? e.message : e));
+          iniciarConHtml5Qrcode();
+          return;
+        }
+
+        navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        }).then(stream => {
+          video.srcObject = stream;
+          scannerActivo = {
+            stop: () => {
+              stream.getTracks().forEach(t => t.stop());
+              reader.innerHTML = '';
+              if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+            }
+          };
+          video.onloadedmetadata = () => video.play().catch(() => {});
+          video.play().catch(() => {});
+
+          const track = stream.getVideoTracks()[0];
+          if (track && track.getCapabilities && track.getCapabilities().torch) {
+            btnFlash.style.display = 'inline-block';
+            btnFlash.onclick = () => {
+              flashPrendido = !flashPrendido;
+              track.applyConstraints({ advanced: [{ torch: flashPrendido }] }).catch(() => {});
+              btnFlash.innerText = flashPrendido ? '⚡ Apagar flash' : '⚡ Encender flash';
+            };
+          }
+
+          function loop() {
+            if (scannerActivo && barcodeScanner && video.readyState >= 2 && video.videoWidth > 0) {
+              if (video.currentTime !== mpUltimoTiempo) {
+                mpUltimoTiempo = video.currentTime;
+                try {
+                  const resultado = barcodeScanner.detectForVideo(video, performance.now());
+                  if (resultado && resultado.barcodes) {
+                    for (const b of resultado.barcodes) {
+                      if (b && b.rawValue) onScanSuccess(b.rawValue);
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+            if (scannerActivo) requestAnimationFrame(loop);
+          }
+
+          res.innerText = 'Camara activa. Apunta al codigo de barras...';
+          res.className = '';
+          mostrarMotor('MediaPipe (Google)');
+          iniciarPing();
+          requestAnimationFrame(loop);
+        }).catch(err => {
+          console.error('Error camara:', err);
+          res.innerText = 'Error de camara o permiso denegado: ' + err;
+          res.className = 'err';
+        });
+      })();
     }
 
     document.getElementById('manual-input').addEventListener('keydown', function(e) {
